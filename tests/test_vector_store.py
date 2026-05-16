@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from importlib import import_module
 from types import SimpleNamespace
 from typing import cast
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
@@ -183,9 +184,9 @@ async def test_deterministic_ids_and_payload_shape_for_upserted_chunks() -> None
     assert vectors_config.size == 4
     assert vectors_config.distance == Distance.COSINE
 
-    assert [point.id for point in fake_client.upserted_points] == [
-        "sample-input-001:0",
-        "sample-input-001:1",
+    assert [UUID(str(point.id)) for point in fake_client.upserted_points] == [
+        uuid5(NAMESPACE_URL, "sample-input-001:0"),
+        uuid5(NAMESPACE_URL, "sample-input-001:1"),
     ]
 
     first_payload = fake_client.upserted_points[0].payload

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import uuid
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Literal, Protocol, cast, runtime_checkable
@@ -194,7 +195,12 @@ class QdrantVectorStore:
 
             points.append(
                 qdrant_models.PointStruct(
-                    id=f"{metadata.input_id}:{chunk.chunk_index}",
+                    id=str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"{metadata.input_id}:{chunk.chunk_index}",
+                        )
+                    ),
                     vector=embedding,
                     payload={
                         "input_id": metadata.input_id,
