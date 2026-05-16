@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Protocol, runtime_checkable
@@ -22,7 +23,13 @@ class TranscriptionConfigError(TranscriptionError):
 
 @runtime_checkable
 class TranscriptionClient(Protocol):
-    async def transcribe(self, audio_bytes: bytes, *, filename: str | None = None) -> str: ...
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -66,21 +73,30 @@ class GradiumTranscriber:
         if self._owns_client:
             await self._client.aclose()
 
-    async def transcribe(self, audio_bytes: bytes, *, filename: str | None = None) -> str:
-        file_name = filename or "audio"
-        files: dict[str, tuple[str, bytes, str]] = {
-            "file": (file_name, audio_bytes, "application/octet-stream"),
-        }
-        data: dict[str, str] = {}
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> str:
+        resolved_content_type = _resolve_audio_content_type(
+            filename=filename,
+            content_type=content_type,
+        )
+        params: dict[str, str] = {}
         if self._config.model:
-            data["model"] = self._config.model
+            params["model_name"] = self._config.model
 
         try:
             response = await self._client.post(
                 self._config.path,
-                headers={"Authorization": f"Bearer {self._config.api_key}"},
-                data=data,
-                files=files,
+                params=params,
+                headers={
+                    "x-api-key": self._config.api_key,
+                    "Content-Type": resolved_content_type,
+                },
+                content=audio_bytes,
             )
         except httpx.TimeoutException as exc:
             raise TranscriptionError("Gradium transcription request timed out") from exc
@@ -93,25 +109,66 @@ class GradiumTranscriber:
                 f"{_response_excerpt(response)}"
             )
 
-        try:
-            payload = response.json()
-        except json.JSONDecodeError as exc:
-            raise TranscriptionError(
-                f"Gradium transcription returned invalid JSON: {_response_excerpt(response)}"
-            ) from exc
+        transcript_parts: list[str] = []
+        for raw_line in response.text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
 
-        if not isinstance(payload, dict):
-            raise TranscriptionError(
-                f"Gradium transcription returned unexpected payload: {_response_excerpt(response)}"
-            )
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise TranscriptionError(
+                    f"Gradium transcription returned invalid NDJSON: {_response_excerpt(response)}"
+                ) from exc
 
-        text = payload.get("text")
-        if not isinstance(text, str) or not text.strip():
+            if not isinstance(payload, dict):
+                raise TranscriptionError(
+                    f"Gradium transcription returned unexpected payload: {_response_excerpt(response)}"
+                )
+
+            message_type = payload.get("type")
+            if message_type == "text":
+                text = payload.get("text")
+                if not isinstance(text, str) or not text.strip():
+                    raise TranscriptionError(
+                        "Gradium transcription text event missing text: "
+                        f"{_response_excerpt(response)}"
+                    )
+                transcript_parts.append(text.strip())
+                continue
+
+            if message_type == "error":
+                message = payload.get("message")
+                if isinstance(message, str) and message.strip():
+                    raise TranscriptionError(
+                        f"Gradium transcription stream failed: {message.strip()}"
+                    )
+                raise TranscriptionError(
+                    "Gradium transcription stream failed without an error message"
+                )
+
+        transcript = " ".join(part for part in transcript_parts if part)
+        if not transcript.strip():
             raise TranscriptionError(
                 f"Gradium transcription response missing text: {_response_excerpt(response)}"
             )
 
-        return text.strip()
+        return transcript.strip()
+
+
+def _resolve_audio_content_type(*, filename: str | None, content_type: str | None) -> str:
+    if content_type and content_type.strip():
+        return content_type.strip()
+
+    if filename:
+        guessed_content_type, _ = mimetypes.guess_type(filename)
+        if guessed_content_type:
+            return guessed_content_type
+
+    raise TranscriptionError(
+        "Gradium transcription requires an audio content type or a recognizable filename"
+    )
 
 
 def _response_excerpt(response: httpx.Response, limit: int = 240) -> str:

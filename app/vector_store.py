@@ -95,7 +95,8 @@ class QdrantVectorStore:
             dimension=settings.embedding_dim,
         )
         self._client: QdrantCollectionsAPI | AsyncQdrantClient = client or AsyncQdrantClient(
-            url=self._config.url
+            url=self._config.url,
+            api_key=settings.qdrant_api_key,
         )
         self._owns_client = client is None
         self._collection_verified = False

@@ -24,9 +24,14 @@ PointStruct = _qdrant_models.PointStruct
 VectorParams = _qdrant_models.VectorParams
 
 
-def make_settings(*, embedding_dim: int = 4) -> Settings:
+def make_settings(
+    *,
+    embedding_dim: int = 4,
+    qdrant_api_key: str | None = None,
+) -> Settings:
     return Settings(
         qdrant_url="http://qdrant:6333",
+        qdrant_api_key=qdrant_api_key,
         qdrant_collection="apple_pie_story_chunks",
         embedding_dim=embedding_dim,
     )
@@ -122,6 +127,37 @@ class FakeQdrantClient:
         )
         self.upserted_points = points
         return SimpleNamespace(status="acknowledged")
+
+
+class AsyncQdrantClientSpy:
+    created_kwargs: dict[str, object] | None = None
+
+    def __init__(self, **kwargs: object) -> None:
+        type(self).created_kwargs = kwargs
+
+    async def collection_exists(self, collection_name: str, **kwargs: object) -> bool:
+        raise AssertionError("unexpected call")
+
+    async def create_collection(self, *args: object, **kwargs: object) -> bool:
+        raise AssertionError("unexpected call")
+
+    async def get_collection(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("unexpected call")
+
+    async def upsert(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("unexpected call")
+
+
+def test_qdrant_cloud_api_key_is_passed_to_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_vector_store, "AsyncQdrantClient", AsyncQdrantClientSpy)
+
+    store = QdrantVectorStore(make_settings(qdrant_api_key="qdrant-secret"), client=None)
+
+    assert store is not None
+    assert AsyncQdrantClientSpy.created_kwargs == {
+        "url": "http://qdrant:6333",
+        "api_key": "qdrant-secret",
+    }
 
 
 @pytest.mark.asyncio
