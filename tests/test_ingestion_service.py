@@ -53,8 +53,20 @@ class FakeTranscriber:
         self.calls: list[dict[str, object]] = []
         self.closed = False
 
-    async def transcribe(self, audio_bytes: bytes, *, filename: str | None = None) -> str:
-        self.calls.append({"audio_bytes": audio_bytes, "filename": filename})
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> str:
+        self.calls.append(
+            {
+                "audio_bytes": audio_bytes,
+                "filename": filename,
+                "content_type": content_type,
+            }
+        )
         return self.transcript
 
     async def aclose(self) -> None:
@@ -141,7 +153,11 @@ async def test_text_wins_over_audio_and_transcriber_is_not_called() -> None:
     result = await service.ingest(
         metadata=make_metadata(),
         text="  Hello\n\napple pie  ",
-        audio_file=AudioFile(content=b"fake-audio-bytes", filename="sample.wav"),
+        audio_file=AudioFile(
+            content=b"fake-audio-bytes",
+            filename="sample.wav",
+            content_type="audio/wav",
+        ),
     )
 
     assert result.input_id == "sample-input-001"
@@ -170,14 +186,22 @@ async def test_audio_only_transcribes_once_and_indexes_audio_source() -> None:
     result = await service.ingest(
         metadata=make_metadata(),
         text=None,
-        audio_file=AudioFile(content=b"fake-audio-bytes", filename="sample.wav"),
+        audio_file=AudioFile(
+            content=b"fake-audio-bytes",
+            filename="sample.wav",
+            content_type="audio/wav",
+        ),
     )
 
     assert result.input_id == "sample-input-001"
     assert result.status == "indexed"
     assert result.chunks == 1
     assert transcriber.calls == [
-        {"audio_bytes": b"fake-audio-bytes", "filename": "sample.wav"}
+        {
+            "audio_bytes": b"fake-audio-bytes",
+            "filename": "sample.wav",
+            "content_type": "audio/wav",
+        }
     ]
     assert chunker.calls == ["transcribed speech"]
     assert vector_store.calls[0]["source"] == "audio"
@@ -197,7 +221,11 @@ async def test_empty_normalized_transcript_is_rejected() -> None:
         await service.ingest(
             metadata=make_metadata(),
             text=None,
-            audio_file=AudioFile(content=b"fake-audio-bytes", filename="sample.wav"),
+            audio_file=AudioFile(
+                content=b"fake-audio-bytes",
+                filename="sample.wav",
+                content_type="audio/wav",
+            ),
         )
 
 

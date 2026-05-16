@@ -43,6 +43,7 @@ class EmbeddingsClient(Protocol):
 class AudioFile:
     content: bytes
     filename: str | None = None
+    content_type: str | None = None
 
 
 class IngestionValidationError(ValueError):
@@ -123,6 +124,7 @@ class IngestionService:
             transcript = await self._get_transcriber().transcribe(
                 audio_file.content,
                 filename=audio_file.filename,
+                content_type=audio_file.content_type,
             )
         except TranscriptionError:
             raise

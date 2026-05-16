@@ -55,18 +55,6 @@ async def parse_ingest_request(
         raise HTTPException(status_code=400, detail="metadata must be valid JSON") from exc
 
     normalized_text = text.strip() if text else ""
-    audio_bytes: bytes | None = None
-    audio_filename: str | None = None
-
-    if audio is not None:
-        audio_bytes = await audio.read()
-        if len(audio_bytes) > settings.max_audio_bytes:
-            raise HTTPException(status_code=400, detail="audio exceeds maximum size")
-        audio_filename = audio.filename
-
-    if not normalized_text and not audio_bytes:
-        raise HTTPException(status_code=400, detail="text or audio required")
-
     if normalized_text:
         return IngestRequest(
             metadata=metadata_model,
@@ -74,10 +62,25 @@ async def parse_ingest_request(
             source="text",
         )
 
+    audio_bytes: bytes | None = None
+    audio_filename: str | None = None
+    audio_content_type: str | None = None
+
+    if audio is not None:
+        audio_bytes = await audio.read()
+        if len(audio_bytes) > settings.max_audio_bytes:
+            raise HTTPException(status_code=400, detail="audio exceeds maximum size")
+        audio_filename = audio.filename
+        audio_content_type = audio.content_type
+
+    if not normalized_text and not audio_bytes:
+        raise HTTPException(status_code=400, detail="text or audio required")
+
     return IngestRequest(
         metadata=metadata_model,
         audio_bytes=audio_bytes,
         audio_filename=audio_filename,
+        audio_content_type=audio_content_type,
         source="audio",
     )
 
@@ -114,4 +117,5 @@ def _build_audio_file(request: IngestRequest) -> AudioFile | None:
     return AudioFile(
         content=request.audio_bytes,
         filename=request.audio_filename,
+        content_type=request.audio_content_type,
     )

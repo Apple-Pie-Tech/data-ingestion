@@ -15,6 +15,7 @@ class IngestRequest(BaseModel):
     text: str | None = None
     audio_bytes: bytes | None = Field(default=None, repr=False)
     audio_filename: str | None = None
+    audio_content_type: str | None = None
     source: Literal["text", "audio"]
 
 

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     request_timeout_seconds: int = 60
 
     qdrant_url: str = "http://qdrant:6333"
+    qdrant_api_key: str | None = None
     qdrant_collection: str = "apple_pie_story_chunks"
 
     azure_openai_endpoint: str | None = None
@@ -29,7 +30,7 @@ class Settings(BaseSettings):
     gradium_api_key: str | None = None
     gradium_transcription_model: str | None = None
     gradium_transcription_transport: str = "rest"
-    gradium_transcription_path: str = "/v1/audio/transcriptions"
+    gradium_transcription_path: str = "/post/speech/asr"
     gradium_timeout_seconds: int = 60
 
 

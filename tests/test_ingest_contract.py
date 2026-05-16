@@ -172,6 +172,60 @@ def test_text_wins_over_audio() -> None:
     assert fake_service.calls[0]["audio_file"] is None
 
 
+def test_text_wins_over_oversized_audio() -> None:
+    fake_service = FakeIngestionService()
+    app.dependency_overrides[get_settings] = lambda: Settings(max_audio_bytes=5)
+    app.dependency_overrides[get_ingestion_service] = lambda: fake_service
+
+    try:
+        response = client.post(
+            "/ingest",
+            files=_multipart_fields(
+                {
+                    "input_id": "sample-input-001",
+                    "user_id": "user-123",
+                    "timestamp": "2026-05-16T12:00:00Z",
+                },
+                text="hello apple pie",
+                audio=b"x" * 10,
+            ),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert fake_service.calls[0]["text"] == "hello apple pie"
+    assert fake_service.calls[0]["audio_file"] is None
+
+
+def test_audio_upload_preserves_filename_and_content_type() -> None:
+    fake_service = FakeIngestionService()
+    app.dependency_overrides[get_ingestion_service] = lambda: fake_service
+
+    try:
+        response = client.post(
+            "/ingest",
+            files=_multipart_fields(
+                {
+                    "input_id": "sample-input-001",
+                    "user_id": "user-123",
+                    "timestamp": "2026-05-16T12:00:00Z",
+                },
+                audio=b"fake-audio-bytes",
+            ),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert fake_service.calls[0]["text"] is None
+    assert fake_service.calls[0]["audio_file"] == AudioFile(
+        content=b"fake-audio-bytes",
+        filename="sample.wav",
+        content_type="audio/wav",
+    )
+
+
 def test_successful_ingest_response_has_required_json_keys() -> None:
     service = IngestionService(
         Settings(),
