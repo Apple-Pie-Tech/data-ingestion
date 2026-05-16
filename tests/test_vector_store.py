@@ -175,6 +175,7 @@ async def test_deterministic_ids_and_payload_shape_for_upserted_chunks() -> None
         ],
         source="text",
         embedding_model="text-embedding-3-large",
+        audio_url=None,
     )
 
     assert upserted == 2
@@ -218,8 +219,29 @@ async def test_wrong_dimension_existing_collection_raises_configuration_error() 
             embeddings=[[0.1, 0.2, 0.3, 0.4]],
             source="audio",
             embedding_model="text-embedding-3-large",
+            audio_url=None,
         )
 
     assert "expected 4, got 3" in str(exc_info.value)
     assert [name for name, _ in fake_client.calls] == ["collection_exists", "get_collection"]
     assert fake_client.upserted_points == []
+
+
+@pytest.mark.asyncio
+async def test_audio_payload_includes_shared_audio_url() -> None:
+    fake_client = FakeQdrantClient(collection_exists_result=False)
+    store = QdrantVectorStore(make_settings(), client=fake_client)
+
+    await store.upsert_chunks(
+        metadata=make_metadata(),
+        chunks=make_chunks()[:1],
+        embeddings=[[0.1, 0.2, 0.3, 0.4]],
+        source="audio",
+        embedding_model="text-embedding-3-large",
+        audio_url="https://example.blob.core.windows.net/ingest-audio/audio/sample-input-001/source.wav",
+    )
+
+    first_payload = fake_client.upserted_points[0].payload
+    assert first_payload["audio_url"] == (
+        "https://example.blob.core.windows.net/ingest-audio/audio/sample-input-001/source.wav"
+    )

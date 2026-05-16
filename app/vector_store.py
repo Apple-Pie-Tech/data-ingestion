@@ -57,6 +57,7 @@ class VectorStoreClient(Protocol):
         embeddings: list[list[float]],
         source: Literal["text", "audio"],
         embedding_model: str,
+        audio_url: str | None,
     ) -> int: ...
 
 
@@ -122,6 +123,7 @@ class QdrantVectorStore:
         embeddings: list[list[float]],
         source: Literal["text", "audio"],
         embedding_model: str,
+        audio_url: str | None,
     ) -> int:
         if len(chunks) != len(embeddings):
             raise VectorStoreError(
@@ -136,6 +138,7 @@ class QdrantVectorStore:
             embeddings=embeddings,
             source=source,
             embedding_model=embedding_model,
+            audio_url=audio_url,
         )
 
         if not points:
@@ -182,6 +185,7 @@ class QdrantVectorStore:
         embeddings: list[list[float]],
         source: Literal["text", "audio"],
         embedding_model: str,
+        audio_url: str | None,
     ) -> list[qdrant_models.PointStruct]:
         points: list[qdrant_models.PointStruct] = []
         for chunk, embedding in zip(chunks, embeddings, strict=True):
@@ -193,6 +197,28 @@ class QdrantVectorStore:
                     f"got {actual_dimension}"
                 )
 
+            payload = {
+                "input_id": metadata.input_id,
+                "user_id": metadata.user_id,
+                "timestamp": metadata.timestamp.isoformat(),
+                "chunk_index": chunk.chunk_index,
+                "text": chunk.text,
+                "source": source,
+                "embedding_model": embedding_model,
+                "semantic_chunking": {
+                    "break_threshold": _get_required_chunk_metadata(
+                        chunk.metadata,
+                        "similarity_threshold",
+                    ),
+                    "overlap_sentences": _get_required_chunk_metadata(
+                        chunk.metadata,
+                        "overlap_sentences",
+                    ),
+                },
+            }
+            if audio_url is not None:
+                payload["audio_url"] = audio_url
+
             points.append(
                 qdrant_models.PointStruct(
                     id=str(
@@ -202,25 +228,7 @@ class QdrantVectorStore:
                         )
                     ),
                     vector=embedding,
-                    payload={
-                        "input_id": metadata.input_id,
-                        "user_id": metadata.user_id,
-                        "timestamp": metadata.timestamp.isoformat(),
-                        "chunk_index": chunk.chunk_index,
-                        "text": chunk.text,
-                        "source": source,
-                        "embedding_model": embedding_model,
-                        "semantic_chunking": {
-                            "break_threshold": _get_required_chunk_metadata(
-                                chunk.metadata,
-                                "similarity_threshold",
-                            ),
-                            "overlap_sentences": _get_required_chunk_metadata(
-                                chunk.metadata,
-                                "overlap_sentences",
-                            ),
-                        },
-                    },
+                    payload=payload,
                 )
             )
 
