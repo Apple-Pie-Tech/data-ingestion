@@ -6,6 +6,7 @@ from importlib import import_module
 from typing import Literal, Protocol
 
 _config = import_module("app.config")
+_audio_storage = import_module("app.audio_storage")
 _embeddings = import_module("app.embeddings")
 _schemas = import_module("app.schemas")
 _semantic_chunking = import_module("app.semantic_chunking")
@@ -13,6 +14,10 @@ _transcription = import_module("app.transcription")
 _vector_store = import_module("app.vector_store")
 
 Settings = _config.Settings
+AudioStorageClient = _audio_storage.AudioStorageClient
+AudioStorageError = _audio_storage.AudioStorageError
+AzureBlobAudioStorage = _audio_storage.AzureBlobAudioStorage
+StoredAudio = _audio_storage.StoredAudio
 EmbeddingClient = _embeddings.EmbeddingClient
 EmbeddingError = _embeddings.EmbeddingError
 IngestMetadata = _schemas.IngestMetadata
@@ -59,8 +64,10 @@ class IngestionService:
         chunker: Chunker | None = None,
         embeddings: EmbeddingsClient | None = None,
         vector_store: VectorStoreClient | None = None,
+        audio_storage: AudioStorageClient | None = None,
     ) -> None:
         self._settings = settings
+        self._audio_storage = audio_storage
         self._transcriber = transcriber
         self._chunker = chunker
         self._embeddings = embeddings
@@ -68,6 +75,7 @@ class IngestionService:
 
     async def aclose(self) -> None:
         for resource in (
+            self._audio_storage,
             self._transcriber,
             self._chunker,
             self._embeddings,
@@ -82,30 +90,75 @@ class IngestionService:
         text: str | None,
         audio_file: AudioFile | None,
     ) -> IngestResult:
-        transcript, source = await self._resolve_transcript(text=text, audio_file=audio_file)
+        stored_audio = await self._store_audio_if_needed(metadata=metadata, text=text, audio_file=audio_file)
+        try:
+            transcript, source = await self._resolve_transcript(text=text, audio_file=audio_file)
 
-        chunks = self._get_chunker().chunk(transcript)
-        if not chunks:
-            raise RuntimeError("semantic chunking produced no chunks")
+            chunks = self._get_chunker().chunk(transcript)
+            if not chunks:
+                raise RuntimeError("semantic chunking produced no chunks")
 
-        embeddings = await self._embed_chunks(chunks)
-        indexed_chunks = await self._upsert_chunks(
-            metadata=metadata,
-            chunks=chunks,
-            embeddings=embeddings,
-            source=source,
-        )
-
-        if indexed_chunks != len(chunks):
-            raise VectorStoreError(
-                "vector store acknowledged an unexpected number of indexed chunks"
+            embeddings = await self._embed_chunks(chunks)
+            indexed_chunks = await self._upsert_chunks(
+                metadata=metadata,
+                chunks=chunks,
+                embeddings=embeddings,
+                source=source,
+                audio_url=stored_audio.url if stored_audio is not None else None,
             )
 
-        return IngestResult(
-            input_id=metadata.input_id,
-            status="indexed",
-            chunks=indexed_chunks,
-        )
+            if indexed_chunks != len(chunks):
+                raise VectorStoreError(
+                    "vector store acknowledged an unexpected number of indexed chunks"
+                )
+
+            return IngestResult(
+                input_id=metadata.input_id,
+                status="indexed",
+                chunks=indexed_chunks,
+                audio_url=stored_audio.url if stored_audio is not None else None,
+            )
+        except Exception:
+            await self._cleanup_stored_audio(stored_audio)
+            raise
+
+    async def _store_audio_if_needed(
+        self,
+        *,
+        metadata: IngestMetadata,
+        text: str | None,
+        audio_file: AudioFile | None,
+    ) -> StoredAudio | None:
+        normalized_text = normalize_text(text or "")
+        if normalized_text:
+            return None
+
+        if audio_file is None or not audio_file.content:
+            return None
+
+        if not self._settings.audio_storage_enabled:
+            return None
+
+        try:
+            return await self._get_audio_storage().store_audio(
+                audio_file.content,
+                input_id=metadata.input_id,
+                filename=audio_file.filename,
+                content_type=audio_file.content_type,
+            )
+        except AudioStorageError:
+            raise
+        except Exception as exc:
+            raise AudioStorageError("audio storage request failed") from exc
+
+    async def _cleanup_stored_audio(self, stored_audio: StoredAudio | None) -> None:
+        if stored_audio is None or not self._settings.audio_storage_enabled:
+            return
+
+        try:
+            await self._get_audio_storage().delete_audio(stored_audio)
+        except Exception:
+            return
 
     async def _resolve_transcript(
         self,
@@ -152,6 +205,7 @@ class IngestionService:
         chunks: list[Chunk],
         embeddings: list[list[float]],
         source: Literal["text", "audio"],
+        audio_url: str | None,
     ) -> int:
         try:
             return await self._get_vector_store().upsert_chunks(
@@ -160,6 +214,7 @@ class IngestionService:
                 embeddings=embeddings,
                 source=source,
                 embedding_model=self._get_embeddings().model_name,
+                audio_url=audio_url,
             )
         except VectorStoreError:
             raise
@@ -170,6 +225,11 @@ class IngestionService:
         if self._transcriber is None:
             self._transcriber = GradiumTranscriber(self._settings)
         return self._transcriber
+
+    def _get_audio_storage(self) -> AudioStorageClient:
+        if self._audio_storage is None:
+            self._audio_storage = AzureBlobAudioStorage(self._settings)
+        return self._audio_storage
 
     def _get_chunker(self) -> Chunker:
         if self._chunker is None:
