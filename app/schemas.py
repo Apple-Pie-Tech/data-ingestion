@@ -23,3 +23,4 @@ class IngestResult(BaseModel):
     input_id: str
     status: str
     chunks: int
+    audio_url: str | None = None

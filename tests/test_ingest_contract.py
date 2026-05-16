@@ -8,6 +8,7 @@ _main = import_module("app.main")
 _schemas = import_module("app.schemas")
 _semantic_chunking = import_module("app.semantic_chunking")
 _vector_store = import_module("app.vector_store")
+_audio_storage = import_module("app.audio_storage")
 
 AudioFile = _ingestion.AudioFile
 IngestionService = _ingestion.IngestionService
@@ -19,6 +20,7 @@ IngestMetadata = _schemas.IngestMetadata
 IngestResult = _schemas.IngestResult
 Chunk = _semantic_chunking.Chunk
 VectorStoreError = _vector_store.VectorStoreError
+AudioStorageError = _audio_storage.AudioStorageError
 
 client = TestClient(app)
 
@@ -45,6 +47,7 @@ class FakeIngestionService:
             input_id=metadata.input_id,
             status="indexed",
             chunks=1,
+            audio_url=None,
         )
 
 
@@ -69,6 +72,17 @@ class FakeEmbeddingsClient:
         return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 
 
+class FakeTranscriber:
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> str:
+        return "transcribed speech"
+
+
 class FakeVectorStore:
     async def upsert_chunks(
         self,
@@ -78,6 +92,7 @@ class FakeVectorStore:
         embeddings: list[list[float]],
         source: str,
         embedding_model: str,
+        audio_url: str | None,
     ) -> int:
         return len(chunks)
 
@@ -91,8 +106,24 @@ class FailingVectorStore:
         embeddings: list[list[float]],
         source: str,
         embedding_model: str,
+        audio_url: str | None,
     ) -> int:
         raise VectorStoreError("Qdrant upsert failed")
+
+
+class FailingAudioStorage:
+    async def store_audio(
+        self,
+        audio_bytes: bytes,
+        *,
+        input_id: str,
+        filename: str | None = None,
+        content_type: str | None = None,
+    ) -> object:
+        raise AudioStorageError("blob upload failed")
+
+    async def delete_audio(self, stored_audio: object) -> None:
+        raise AssertionError("delete_audio should not be called when upload fails")
 
 
 def _multipart_fields(
@@ -257,6 +288,93 @@ def test_successful_ingest_response_has_required_json_keys() -> None:
         "status": "indexed",
         "chunks": 1,
     }
+
+
+def test_audio_ingest_returns_audio_url_when_storage_is_enabled() -> None:
+    class FakeAudioStorage:
+        async def store_audio(
+            self,
+            audio_bytes: bytes,
+            *,
+            input_id: str,
+            filename: str | None = None,
+                content_type: str | None = None,
+        ) -> object:
+            return _audio_storage.StoredAudio(
+                blob_name="audio/sample-input-001/source.wav",
+                url=(
+                    "https://example.blob.core.windows.net/ingest-audio/"
+                    "audio/sample-input-001/source.wav"
+                )
+            )
+
+        async def delete_audio(self, stored_audio: object) -> None:
+            raise AssertionError("delete_audio should not be called on successful ingest")
+
+    service = IngestionService(
+        Settings(audio_storage_enabled=True),
+        transcriber=FakeTranscriber(),
+        chunker=FakeChunker(),
+        embeddings=FakeEmbeddingsClient(),
+        vector_store=FakeVectorStore(),
+        audio_storage=FakeAudioStorage(),
+    )
+    app.dependency_overrides[get_ingestion_service] = lambda: service
+
+    try:
+        response = client.post(
+            "/ingest",
+            files=_multipart_fields(
+                {
+                    "input_id": "sample-input-001",
+                    "user_id": "user-123",
+                    "timestamp": "2026-05-16T12:00:00Z",
+                },
+                audio=b"fake-audio-bytes",
+            ),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "input_id": "sample-input-001",
+        "status": "indexed",
+        "chunks": 1,
+        "audio_url": (
+            "https://example.blob.core.windows.net/ingest-audio/"
+            "audio/sample-input-001/source.wav"
+        ),
+    }
+
+
+def test_audio_storage_failure_returns_503() -> None:
+    service = IngestionService(
+        Settings(audio_storage_enabled=True),
+        chunker=FakeChunker(),
+        embeddings=FakeEmbeddingsClient(),
+        vector_store=FakeVectorStore(),
+        audio_storage=FailingAudioStorage(),
+    )
+    app.dependency_overrides[get_ingestion_service] = lambda: service
+
+    try:
+        response = client.post(
+            "/ingest",
+            files=_multipart_fields(
+                {
+                    "input_id": "sample-input-001",
+                    "user_id": "user-123",
+                    "timestamp": "2026-05-16T12:00:00Z",
+                },
+                audio=b"fake-audio-bytes",
+            ),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "audio_storage_unavailable"}
 
 
 def test_vector_store_failure_returns_503() -> None:

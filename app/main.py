@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import ValidationError
 
 _config = import_module("app.config")
+_audio_storage = import_module("app.audio_storage")
 _embeddings = import_module("app.embeddings")
 _ingestion = import_module("app.ingestion")
 _schemas = import_module("app.schemas")
@@ -15,6 +16,7 @@ _vector_store = import_module("app.vector_store")
 
 Settings = _config.Settings
 get_settings = _config.get_settings
+AudioStorageError = _audio_storage.AudioStorageError
 EmbeddingError = _embeddings.EmbeddingError
 AudioFile = _ingestion.AudioFile
 IngestionService = _ingestion.IngestionService
@@ -85,7 +87,7 @@ async def parse_ingest_request(
     )
 
 
-@app.post("/ingest", response_model=IngestResult)
+@app.post("/ingest", response_model=IngestResult, response_model_exclude_none=True)
 async def ingest(
     request: Annotated[IngestRequest, Depends(parse_ingest_request)],
     service: Annotated[IngestionService, Depends(get_ingestion_service)],
@@ -100,6 +102,8 @@ async def ingest(
         raise
     except IngestionValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AudioStorageError as exc:
+        raise HTTPException(status_code=503, detail="audio_storage_unavailable") from exc
     except TranscriptionError as exc:
         raise HTTPException(status_code=502, detail="transcription_unavailable") from exc
     except EmbeddingError as exc:
