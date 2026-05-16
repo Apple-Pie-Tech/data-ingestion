@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     ingest_api_key: str | None = None
     max_audio_bytes: int = 25_000_000
     request_timeout_seconds: int = 60
+    audio_storage_enabled: bool = False
+    azure_blob_connection_string: str | None = None
+    azure_blob_container: str = "ingest-audio"
 
     qdrant_url: str = "http://qdrant:6333"
     qdrant_api_key: str | None = None
