@@ -1,0 +1,40 @@
+services:
+  app:
+    build:
+      context: .
+    depends_on:
+      - qdrant
+    environment:
+      INGEST_API_KEY: ${INGEST_API_KEY:-local-dev-ingest-key}
+      MAX_AUDIO_BYTES: ${MAX_AUDIO_BYTES:-25000000}
+      REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-60}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-apple_pie_story_chunks}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-https://example.invalid/openai/v1/}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-fake-azure-openai-api-key}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-10-21}
+      AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT: ${AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT:-text-embedding-3-large}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-3072}
+      SEMANTIC_SIMILARITY_THRESHOLD: ${SEMANTIC_SIMILARITY_THRESHOLD:-0.8}
+      MIN_CHUNK_CHARS: ${MIN_CHUNK_CHARS:-350}
+      MAX_CHUNK_CHARS: ${MAX_CHUNK_CHARS:-1400}
+      CHUNK_OVERLAP_SENTENCES: ${CHUNK_OVERLAP_SENTENCES:-1}
+      GRADIUM_API_BASE_URL: ${GRADIUM_API_BASE_URL:-https://example.invalid}
+      GRADIUM_API_KEY: ${GRADIUM_API_KEY:-fake-gradium-api-key}
+      GRADIUM_TRANSCRIPTION_MODEL: ${GRADIUM_TRANSCRIPTION_MODEL:-demo-transcription-model}
+      GRADIUM_TRANSCRIPTION_TRANSPORT: ${GRADIUM_TRANSCRIPTION_TRANSPORT:-rest}
+      GRADIUM_TRANSCRIPTION_PATH: ${GRADIUM_TRANSCRIPTION_PATH:-/v1/audio/transcriptions}
+      GRADIUM_TIMEOUT_SECONDS: ${GRADIUM_TIMEOUT_SECONDS:-60}
+    ports:
+      - "8000:8000"
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+
+volumes:
+  qdrant_storage:

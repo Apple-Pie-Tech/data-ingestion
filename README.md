@@ -129,8 +129,6 @@ Chonkie-backed MVP behavior:
 Initial settings:
 
 ```text
-CHUNKING_PROVIDER=chonkie
-CHONKIE_CHUNKER=semantic
 SEMANTIC_SIMILARITY_THRESHOLD=<start-with-chonkie-default-or-0.72>
 MIN_CHUNK_CHARS=350
 MAX_CHUNK_CHARS=1400
@@ -259,19 +257,104 @@ Dockerfile shape:
 ```dockerfile
 FROM python:3.12-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_SYSTEM_PYTHON=1
+
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
 RUN pip install --no-cache-dir uv \
-    && uv sync --frozen --no-dev
+    && useradd --create-home --shell /usr/sbin/nologin --uid 10001 appuser
+
+COPY pyproject.toml uv.lock README.md ./
 
 COPY app ./app
 
+RUN uv sync --frozen --no-dev \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["python", "-c", "import json, sys, urllib.request; response = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); payload = json.load(response); sys.exit(0 if payload.get('status') == 'ok' else 1)"]
+
 CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 For a hackathon demo, Qdrant can run as a separate service/container or be hosted externally. The ingestion app only needs `QDRANT_URL` and collection settings.
+
+### Local verification and container runtime
+
+Run the default test suite first. The external smoke module is env-gated and skipped unless you explicitly set `RUN_EXTERNAL_SMOKE=1`:
+
+```bash
+uv run pytest
+```
+
+If you want to verify the smoke module stays skip-safe without real provider credentials, run:
+
+```bash
+RUN_EXTERNAL_SMOKE=0 uv run pytest tests/test_external_smoke.py
+```
+
+Build the image locally:
+
+```bash
+docker build -t apple-pie-data-ingestion:local .
+```
+
+Run the container smoke with the safe example env file and verify `/health`:
+
+```bash
+docker run -d --name apple-pie-ingest-test -p 8000:8000 --env-file .env.example apple-pie-data-ingestion:local
+curl -fsS http://localhost:8000/health
+docker rm -f apple-pie-ingest-test
+```
+
+For local stack smoke, `docker-compose.yml` starts the app alongside Qdrant and uses fake Azure/Gradium defaults so `/health` stays available without real provider credentials. Override the env values only when you intentionally want to exercise real external calls.
+
+```bash
+docker compose up --build app qdrant
+```
+
+Text-only ingest smoke command (for use with real provider overrides or a test double stack):
+
+```bash
+./scripts/smoke_text_ingest.sh
+```
+
+Equivalent curl command used by the smoke script:
+
+```bash
+curl -fsS \
+  -X POST http://localhost:8000/ingest \
+  -F 'text=Alice followed the rabbit hole into a bright hall. She found a tiny golden key on a glass table.' \
+  -F 'metadata={"input_id":"sample-input-001","user_id":"user-001","timestamp":"2026-05-16T12:00:00Z"}'
+```
+
+For real external smoke with live Azure/Qdrant/Gradium integrations, export these env vars before running `tests/test_external_smoke.py`:
+
+```bash
+export RUN_EXTERNAL_SMOKE=1
+export QDRANT_URL=http://localhost:6333
+export AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+export AZURE_OPENAI_API_KEY=replace-me
+export AZURE_OPENAI_API_VERSION=2024-10-21
+export AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=text-embedding-3-large
+export GRADIUM_API_BASE_URL=https://your-gradium-host
+export GRADIUM_API_KEY=replace-me
+export GRADIUM_TRANSCRIPTION_MODEL=whisper-1
+```
+
+Use the same env block above for the smoke commands below. The text-only smoke needs `RUN_EXTERNAL_SMOKE`, `QDRANT_URL`, and `AZURE_OPENAI_*`; the audio smoke also needs the `GRADIUM_*` values and uploads `tests/fixtures/sample.wav`.
+
+```bash
+uv run pytest tests/test_external_smoke.py -k text_only
+uv run pytest tests/test_external_smoke.py -k audio_external
+```
 
 ## Missing aspects and answers
 
