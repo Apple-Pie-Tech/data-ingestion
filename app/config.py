@@ -6,6 +6,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    cors_allow_origins: str = (
+        "http://127.0.0.1:8081,http://localhost:8081,"
+        "http://127.0.0.1:8080,http://localhost:8080"
+    )
+    story_labeling_enabled: bool = False
+    story_labeling_api_base_url: str | None = None
+    story_labeling_timeout_seconds: int = 60
+
     ingest_api_key: str | None = None
     max_audio_bytes: int = 25_000_000
     request_timeout_seconds: int = 60

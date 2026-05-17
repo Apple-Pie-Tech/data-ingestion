@@ -1,8 +1,8 @@
-# Apple Pie Data Ingestion Plan
+# Apple Pie Data Ingestion
 
 This repo owns the **DB ingestion system** for Apple Pie. It receives captured user inputs, turns them into semantically meaningful text chunks, embeds those chunks, and writes them to Qdrant for later processing and generation.
 
-The repo is currently empty apart from Git metadata, so this plan starts from a minimal, reliable hackathon scaffold instead of adapting existing code.
+This document started as an implementation plan, but the service is now live code. Treat the current Python modules, tests, and env examples as the source of truth when this README and the historical plan text ever differ.
 
 ## MVP goal
 
@@ -57,6 +57,10 @@ fields:
   metadata: JSON string, required
 ```
 
+For browser-based UI clients, the service must answer CORS preflights for the allowed web origins. The current app supports a comma-separated `CORS_ALLOW_ORIGINS` env var and defaults it to common local Expo web origins.
+
+After a successful ingest, the app can optionally trigger the story-labeling service through `POST /cluster-labels`. This trigger is config-driven (`STORY_LABELING_ENABLED`, `STORY_LABELING_API_BASE_URL`) and runs as a best-effort side effect so labeling failures do not turn a successful ingest into an ingest error.
+
 Rules:
 
 - Accept `audio`, `text`, or both.
@@ -87,14 +91,14 @@ Implementation shape:
 ```python
 async def transcribe_audio(audio_path: str) -> str:
     # Upload a complete audio file to Gradium's REST transcription API.
-    # Keep this behind our own adapter because exact endpoint/payload details
-    # should come from Gradium API docs or studio credentials.
+    # The current implementation uses raw request bodies, x-api-key auth,
+    # and /post/speech/asr.
     ...
 ```
 
 Open question resolved: **Is the provider Gradio or Gradium?** It is Gradium. Remove `gradio_client` from the plan and build a `GradiumTranscriber` adapter using `httpx`.
 
-Open question still pending: **What exact Gradium endpoint and payload should we call?** Public docs confirm transcription APIs exist, but the exact request/response contract, file-size limits, auth header, timestamp/diarization support, and retry semantics should be taken from Gradium API docs or the team account before implementation.
+Current implementation note: the service normalizes legacy `/v1/audio/transcriptions` config to `/post/speech/asr`, sends the audio bytes as the raw request body, uses the `x-api-key` header, and converts WAV uploads to mono `pcm_16000` when possible for Gradium compatibility.
 
 ### 3. Proper semantic chunking with Chonkie
 
@@ -181,7 +185,7 @@ Each Qdrant point:
 
 ```json
 {
-  "id": "<input_id>:<chunk_index>",
+  "id": "uuidv5(<input_id>:<chunk_index>)",
   "vector": [0.1, 0.2, ...],
   "payload": {
     "input_id": "...",
@@ -204,7 +208,7 @@ Rules:
 - Create the collection on startup if it does not exist.
 - Collection vector size must exactly match `EMBEDDING_DIM`.
 - Batch upsert all chunks for one input.
-- Use deterministic point IDs `<input_id>:<chunk_index>` so retries overwrite the same chunks.
+- Use deterministic UUIDv5 point IDs derived from `<input_id>:<chunk_index>` so retries overwrite the same chunks without relying on raw string IDs.
 - Store original metadata in payload so later systems can label and group points by user/input/time.
 
 Open question resolved: **What is the vector DB object?** One object is one semantic chunk, its Azure embedding vector, and metadata payload.
@@ -370,7 +374,7 @@ uv run pytest tests/test_external_smoke.py -k audio_external
 | Deployment | Docker container only. The app should not assume host-local execution. |
 | Auth between systems | Use one shared `INGEST_API_KEY` header if exposed beyond private hackathon networking. |
 | Async job tracking | Start synchronous; switch to FastAPI `BackgroundTasks` only if transcription or embedding timeout is a problem. |
-| Duplicate input handling | Use deterministic point IDs `<input_id>:<chunk_index>` so retries overwrite the same chunks. |
+| Duplicate input handling | Use deterministic UUIDv5 point IDs derived from `<input_id>:<chunk_index>` so retries overwrite the same chunks. |
 | Qdrant deployment | Run Qdrant separately from the app container or use hosted Qdrant; configure via `QDRANT_URL`. |
 | Full transcript storage | Store chunk text in every payload; store full transcript elsewhere later only if needed. |
 | Processing-system labels | Not this repo's job. Preserve metadata and chunk IDs so labels can be attached later. |

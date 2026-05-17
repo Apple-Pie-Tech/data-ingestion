@@ -7,18 +7,22 @@ _ingestion = import_module("app.ingestion")
 _main = import_module("app.main")
 _schemas = import_module("app.schemas")
 _semantic_chunking = import_module("app.semantic_chunking")
+_story_labeling = import_module("app.story_labeling")
 _vector_store = import_module("app.vector_store")
 _audio_storage = import_module("app.audio_storage")
 
 AudioFile = _ingestion.AudioFile
 IngestionService = _ingestion.IngestionService
 app = _main.app
+create_app = _main.create_app
 get_ingestion_service = _main.get_ingestion_service
 get_settings = _main.get_settings
+get_story_labeling_trigger = _main.get_story_labeling_trigger
 Settings = _main.Settings
 IngestMetadata = _schemas.IngestMetadata
 IngestResult = _schemas.IngestResult
 Chunk = _semantic_chunking.Chunk
+StoryLabelingTriggerResult = _story_labeling.StoryLabelingTriggerResult
 VectorStoreError = _vector_store.VectorStoreError
 AudioStorageError = _audio_storage.AudioStorageError
 
@@ -48,6 +52,27 @@ class FakeIngestionService:
             status="indexed",
             chunks=1,
             audio_url=None,
+        )
+
+
+class FakeStoryLabelingTrigger:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def trigger_cluster_labels(
+        self,
+        *,
+        metadata: IngestMetadata,
+        source: str,
+    ) -> StoryLabelingTriggerResult:
+        self.calls.append({"metadata": metadata, "source": source})
+        return StoryLabelingTriggerResult(
+            status="completed",
+            points_read=5,
+            points_clustered=4,
+            clusters_found=2,
+            noise_points=1,
+            points_updated=6,
         )
 
 
@@ -148,9 +173,28 @@ def test_health_endpoint_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_ingest_preflight_returns_cors_headers_for_allowed_origin() -> None:
+    cors_app = create_app(Settings(cors_allow_origins="http://127.0.0.1:8081"))
+    cors_client = TestClient(cors_app)
+
+    response = cors_client.options(
+        "/ingest",
+        headers={
+            "Origin": "http://127.0.0.1:8081",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:8081"
+    assert "POST" in response.headers["access-control-allow-methods"]
+
+
 def test_text_only_ingest_uses_fake_service() -> None:
     fake_service = FakeIngestionService()
+    fake_trigger = FakeStoryLabelingTrigger()
     app.dependency_overrides[get_ingestion_service] = lambda: fake_service
+    app.dependency_overrides[get_story_labeling_trigger] = lambda: fake_trigger
 
     try:
         response = client.post(
@@ -176,6 +220,18 @@ def test_text_only_ingest_uses_fake_service() -> None:
     assert len(fake_service.calls) == 1
     assert fake_service.calls[0]["text"] == "hello apple pie"
     assert fake_service.calls[0]["audio_file"] is None
+    assert fake_trigger.calls == [
+        {
+            "metadata": IngestMetadata.model_validate(
+                {
+                    "input_id": "sample-input-001",
+                    "user_id": "user-123",
+                    "timestamp": "2026-05-16T12:00:00Z",
+                }
+            ),
+            "source": "text",
+        }
+    ]
 
 
 def test_text_wins_over_audio() -> None:
