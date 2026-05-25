@@ -1,0 +1,18 @@
+- uv sync with hatchling requires the project README to be present in the build context when [project].readme is set.
+- Copying app/ before uv sync in Docker avoids editable-build issues for the local package.
+- `uv sync --extra dev` was required in this repo to install pytest into the project venv before running `uv run pytest`.
+- For the ingest contract, text precedence is easiest to enforce by stripping audio from the internal request when text is present.
+- Ruff B008 is avoided cleanly in FastAPI by using `typing.Annotated` for `Depends`, `Form`, and `File` parameters, with dependency parameters ordered before optional form/file defaults.
+- `import_module("app...")` mirrors the existing app entrypoint and avoids Pyright import-resolution noise in this workspace without needing a package-path shim.
+- Chonkie's top-level `SemanticChunker` export resolves to the cloud/API wrapper in this environment; the local embedding-backed chunker lives at `chonkie.chunker.semantic.SemanticChunker` and is the correct path for task 4.
+- Chonkie's local semantic chunker works cleanly in unit tests with a fake `BaseEmbeddings` implementation, which keeps semantic-boundary tests deterministic and avoids any Azure calls.
+- Task 5 can unit test the Qdrant adapter without a live server by using a fake async client plus `SimpleNamespace` for nested collection config and real `qdrant_client.http.models.PointStruct` values for payload assertions.
+- Task 6 works cleanly by keeping multipart parsing in `app/main.py` and delegating source selection, transcript normalization, embedding, and Qdrant upsert orchestration to `app/ingestion.py`.
+- Lazy adapter construction in `IngestionService` avoids requiring Gradium configuration during dependency creation for text-only requests while still preserving route-level error mapping for audio, embedding, and vector-store failures.
+- Task 8 smoke coverage stays safe by gating `tests/test_external_smoke.py` behind `RUN_EXTERNAL_SMOKE=1` and then skipping individual live-provider paths with a clear missing-env list instead of failing the default suite.
+- Keeping the README curl example and `scripts/smoke_text_ingest.sh` on the same `sample-input-001` / `user-001` / `2026-05-16T12:00:00Z` metadata prevents executor handoff drift.
+- Semantic chunking tunables belong in `Settings` so the adapter stays config-driven and testable instead of reading process env directly.
+- For optional third-party clients, use reflective `aclose`/`close` cleanup behind ownership flags so lazy construction remains safe and Pyright-friendly.
+- F3 manual QA passed with fake env values: `docker build -t apple-pie-data-ingestion:f3 .`, `docker run -d --name apple-pie-ingest-f3 -p 8000:8000 --env-file .env.example apple-pie-data-ingestion:f3`, and `curl -fsS http://localhost:8000/health` returned `{"status":"ok"}`.
+- `uv run pytest tests/test_ingest_contract.py -q` passed with `8 passed`, which includes the TestClient text-only ingest path and `/health` coverage without real credentials.
+- `RUN_EXTERNAL_SMOKE=0 uv run pytest tests/test_external_smoke.py -q` returned `2 skipped`, confirming the external smoke tests remain env-gated unless explicitly enabled.

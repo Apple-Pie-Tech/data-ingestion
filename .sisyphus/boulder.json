@@ -1,0 +1,109 @@
+{
+  "active_plan": "/home/filipp/Projects/ApplePie/data-ingestion/.sisyphus/plans/data-ingestion-implementation.md",
+  "started_at": "2026-05-16T10:21:07.388Z",
+  "session_ids": [
+    "ses_1cfd8a277fferltB3Zw0fulsx8",
+    "ses_1cfd8a277fferltB3Zw0fulsx8",
+    "ses_1cfb190c8ffex8RNy7Jho2jR0h",
+    "ses_1cfb19079ffeiaaTJYzuTH1hvl",
+    "ses_1cfb19035ffe33IxFxPb2HFZN7",
+    "ses_1cfac1e3cffehJXwzITEfF2ezI",
+    "ses_1cfa4f838ffeH6dY7ybnpjZzYW",
+    "ses_1cfa08f7affeagOh0ab5WyRRNo",
+    "ses_1cf9812aeffeAMut3kFX03hzsn",
+    "ses_1cf92d10cffepNPjEGi01Mr73k",
+    "ses_1cf633786ffedQ5dNaWzwWWcs2",
+    "ses_1cf496db8ffevihHMnqwJYOB1c",
+    "ses_1cf390ac4ffegYka5SOE6wv7K8",
+    "ses_1cf37de5affe2C1ziDbItqx2Lf",
+    "ses_1cf2230a0ffemO5pddoi04kM7F",
+    "ses_1cf1edce5ffe6FjJ5fzcWe4e6u",
+    "ses_1cf1e21b2ffe6kARis2ICUUSrA",
+    "ses_1cf1cbbdcffe0m0bLLdPtScX6W"
+  ],
+  "plan_name": "data-ingestion-implementation",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Scaffold Python/uv/Docker project foundation",
+      "session_id": "ses_1cfb19035ffe33IxFxPb2HFZN7",
+      "agent": "librarian",
+      "category": "",
+      "updated_at": "2026-05-16T10:23:50.971Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "Implement config, schemas, `/health`, and request validation",
+      "session_id": "ses_1cfac1e3cffehJXwzITEfF2ezI",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-16T10:32:09.255Z"
+    },
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "Implement Gradium REST transcription adapter",
+      "session_id": "ses_1cfa4f838ffeH6dY7ybnpjZzYW",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-16T10:37:58.334Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "Implement Azure embeddings and Chonkie semantic chunking adapter",
+      "session_id": "ses_1cfa08f7affeagOh0ab5WyRRNo",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-05-16T10:47:47.165Z"
+    },
+    "todo:5": {
+      "task_key": "todo:5",
+      "task_label": "5",
+      "task_title": "Implement Qdrant vector store adapter",
+      "session_id": "ses_1cf9812aeffeAMut3kFX03hzsn",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-05-16T10:53:37.729Z"
+    },
+    "todo:6": {
+      "task_key": "todo:6",
+      "task_label": "6",
+      "task_title": "Wire linear ingestion orchestration end-to-end",
+      "session_id": "ses_1cf92d10cffepNPjEGi01Mr73k",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-05-16T11:14:59.081Z"
+    },
+    "todo:7": {
+      "task_key": "todo:7",
+      "task_label": "7",
+      "task_title": "Finalize container runtime and compose smoke stack",
+      "session_id": "ses_1cf800e3affePPaEO0cTFIA0V2",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-05-16T11:45:52.267Z"
+    },
+    "todo:8": {
+      "task_key": "todo:8",
+      "task_label": "8",
+      "task_title": "Add smoke tests and README alignment for executor handoff",
+      "session_id": "ses_1cf633786ffedQ5dNaWzwWWcs2",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-05-16T12:14:37.536Z"
+    },
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "Plan Compliance Audit — oracle",
+      "session_id": "ses_1cf1cbbdcffe0m0bLLdPtScX6W",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-16T13:05:00.422Z"
+    }
+  }
+}

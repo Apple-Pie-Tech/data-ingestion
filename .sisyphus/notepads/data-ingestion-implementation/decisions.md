@@ -1,0 +1,8 @@
+- Use hatchling as the build backend for the uv-managed scaffold so the project can be installed during uv sync.
+- Keep the Docker image minimal: copy only pyproject.toml, uv.lock, README.md, and app/ before sync; exclude dev-only files via .dockerignore.
+- For task 4, use a narrow async `EmbeddingClient` around `openai.AsyncAzureOpenAI` for final vectors, but point semantic chunking at Chonkie's local `chonkie.chunker.semantic.SemanticChunker` instead of the package-level cloud export.
+- Keep semantic chunk metadata on the adapter return objects and read chunking tunables from env in `app/semantic_chunking.py` so task 4 stays scoped without expanding `app/config.py` yet.
+- For task 5, keep `QdrantVectorStore` payloads narrowed to the README contract by mapping chunk metadata into `semantic_chunking.break_threshold` and `semantic_chunking.overlap_sentences` instead of persisting all chunker internals.
+- For task 6, keep `parse_ingest_request` as the HTTP boundary for multipart validation and audio-size checks, but move ingest orchestration into a dedicated `IngestionService` that accepts `metadata`, `text`, and an internal audio-file value object.
+- For task 6, map route responses from domain exceptions with stable detail codes for provider-backed failures (`transcription_unavailable`, `embedding_unavailable`, `vector_store_unavailable`) while keeping validation failures as direct 400 details.
+- For task 8, run external smoke through `TestClient(app)` so pytest exercises the real FastAPI `/ingest` path with env-backed adapters while remaining skipped by default unless `RUN_EXTERNAL_SMOKE=1`.

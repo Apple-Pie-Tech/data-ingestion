@@ -298,6 +298,12 @@ Run the default test suite first. The external smoke module is env-gated and ski
 uv run pytest
 ```
 
+For the stable local contract check used by CI parity, run:
+
+```bash
+uv run pytest tests/test_ingest_contract.py -q
+```
+
 If you want to verify the smoke module stays skip-safe without real provider credentials, run:
 
 ```bash
@@ -328,6 +334,30 @@ Text-only ingest smoke command (for use with real provider overrides or a test d
 
 ```bash
 ./scripts/smoke_text_ingest.sh
+```
+
+Full-chain local smoke command (synthetic text only; appends evidence to `.sisyphus/evidence/task-5-full-chain-smoke.txt`):
+
+```bash
+./scripts/smoke_full_chain.sh
+```
+
+The full-chain smoke treats the labeling hop as trigger evidence: it records the HTTP response from `POST /cluster-labels` after ingest and only fails that hop when the labeling service is unreachable or not responding over HTTP.
+
+Local default URLs for the full-chain smoke command:
+
+- `INGEST_API_URL` or legacy `API_URL`: `http://127.0.0.1:8000`
+- `LABELING_API_URL`: `http://127.0.0.1:8001`
+- `PROVISION_API_URL`: `http://127.0.0.1:8002`
+- Optional `PODCAST_LABEL`: overrides the label used for `POST /podcasts` when `/universe` is empty
+
+Example with explicit local URLs:
+
+```bash
+INGEST_API_URL=http://127.0.0.1:8000 \
+LABELING_API_URL=http://127.0.0.1:8001 \
+PROVISION_API_URL=http://127.0.0.1:8002 \
+./scripts/smoke_full_chain.sh
 ```
 
 Equivalent curl command used by the smoke script:

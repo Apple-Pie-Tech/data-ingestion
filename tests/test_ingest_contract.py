@@ -76,6 +76,20 @@ class FakeStoryLabelingTrigger:
         )
 
 
+class FailingStoryLabelingTrigger:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def trigger_cluster_labels(
+        self,
+        *,
+        metadata: IngestMetadata,
+        source: str,
+    ) -> StoryLabelingTriggerResult:
+        self.calls.append({"metadata": metadata, "source": source})
+        raise _story_labeling.StoryLabelingTriggerError("story labeling trigger failed")
+
+
 class FakeChunker:
     def chunk(self, text: str) -> list[Chunk]:
         return [
@@ -221,6 +235,48 @@ def test_text_only_ingest_uses_fake_service() -> None:
     assert fake_service.calls[0]["text"] == "hello apple pie"
     assert fake_service.calls[0]["audio_file"] is None
     assert fake_trigger.calls == [
+        {
+            "metadata": IngestMetadata.model_validate(
+                {
+                    "input_id": "sample-input-001",
+                    "user_id": "user-123",
+                    "timestamp": "2026-05-16T12:00:00Z",
+                }
+            ),
+            "source": "text",
+        }
+    ]
+
+
+def test_text_only_ingest_succeeds_when_story_labeling_trigger_fails() -> None:
+    fake_service = FakeIngestionService()
+    failing_trigger = FailingStoryLabelingTrigger()
+    app.dependency_overrides[get_ingestion_service] = lambda: fake_service
+    app.dependency_overrides[get_story_labeling_trigger] = lambda: failing_trigger
+
+    try:
+        response = client.post(
+            "/ingest",
+            files=_multipart_fields(
+                {
+                    "input_id": "sample-input-001",
+                    "user_id": "user-123",
+                    "timestamp": "2026-05-16T12:00:00Z",
+                },
+                text="hello apple pie",
+            ),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "input_id": "sample-input-001",
+        "status": "indexed",
+        "chunks": 1,
+    }
+    assert len(fake_service.calls) == 1
+    assert failing_trigger.calls == [
         {
             "metadata": IngestMetadata.model_validate(
                 {

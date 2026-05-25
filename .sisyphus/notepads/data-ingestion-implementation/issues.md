@@ -1,0 +1,3 @@
+- Docker build initially failed because README.md was excluded by .dockerignore while pyproject.toml referenced it as the project readme.
+- `uv run pytest` used the global pytest entrypoint until the `dev` extra was synced into the project venv.
+- `pyrightconfig.json` was unnecessary once the FastAPI imports and parameter annotations were reshaped for Ruff; diagnostics stayed green after removing it.
