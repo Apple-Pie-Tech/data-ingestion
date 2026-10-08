@@ -37,6 +37,17 @@ class AudioStorageClient(Protocol):
         content_type: str | None = None,
     ) -> StoredAudio: ...
 
+    async def aclose(self) -> None:
+        """Release the underlying async client's aiohttp session.
+
+        ``IngestionService.aclose`` discovers this by name; without it the
+        session leaked on every request (ISSUES.md E58).
+        """
+        client = getattr(self, "_blob_service_client", None)
+        if client is None:
+            return
+        await client.close()
+
     async def delete_audio(self, stored_audio: StoredAudio) -> None: ...
 
 
@@ -45,11 +56,11 @@ class AzureBlobAudioStorage:
         if not settings.audio_storage_enabled:
             raise AudioStorageConfigurationError("audio storage is disabled")
 
-        if not settings.azure_blob_connection_string:
-            raise AudioStorageConfigurationError("AZURE_BLOB_CONNECTION_STRING is required")
+        if not settings.azure_storage_connection_string:
+            raise AudioStorageConfigurationError("AZURE_STORAGE_CONNECTION_STRING is required")
 
-        if not settings.azure_blob_container:
-            raise AudioStorageConfigurationError("AZURE_BLOB_CONTAINER is required")
+        if not settings.azure_storage_container:
+            raise AudioStorageConfigurationError("AZURE_STORAGE_CONTAINER is required")
 
         try:
             azure_blob = import_module("azure.storage.blob")
@@ -61,12 +72,11 @@ class AzureBlobAudioStorage:
             ) from exc
 
         self._blob_service_client = azure_blob_async.BlobServiceClient.from_connection_string(
-            settings.azure_blob_connection_string
+            settings.azure_storage_connection_string
         )
         self._content_settings_cls = azure_blob.ContentSettings
-        self._public_access_blob = azure_blob.PublicAccess.Blob
         self._resource_exists_error = azure_core_exceptions.ResourceExistsError
-        self._container_name = settings.azure_blob_container
+        self._container_name = settings.azure_storage_container
         self._container_ready = False
 
     async def store_audio(
@@ -92,6 +102,17 @@ class AzureBlobAudioStorage:
         await blob_client.upload_blob(audio_bytes, overwrite=True, content_settings=content_settings)
         return StoredAudio(blob_name=blob_name, url=blob_client.url)
 
+    async def aclose(self) -> None:
+        """Release the underlying async client's aiohttp session.
+
+        ``IngestionService.aclose`` discovers this by name; without it the
+        session leaked on every request (ISSUES.md E58).
+        """
+        client = getattr(self, "_blob_service_client", None)
+        if client is None:
+            return
+        await client.close()
+
     async def delete_audio(self, stored_audio: StoredAudio) -> None:
         blob_client = self._blob_service_client.get_blob_client(
             container=self._container_name,
@@ -105,11 +126,12 @@ class AzureBlobAudioStorage:
 
         container_client = self._blob_service_client.get_container_client(self._container_name)
         try:
-            await container_client.create_container(public_access=self._public_access_blob)
+            # Deliberately private. Blob names derive from a client-supplied
+            # input_id, so a public container would expose guessable URLs to
+            # private voice recordings. Readers get a read-time SAS instead.
+            await container_client.create_container()
         except self._resource_exists_error:
             pass
-
-        await container_client.set_container_access_policy(public_access=self._public_access_blob)
 
         self._container_ready = True
 

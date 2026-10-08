@@ -14,7 +14,7 @@
 - `4aceb8e` `fix qdrant ids`
   - Qdrant point IDs were changed from `<input_id>:<chunk_index>` strings to deterministic UUIDv5 values because the target Qdrant instance rejected the old string IDs.
 - `4f51d52` `fix gradium wav`
-  - Gradium transcription adapter now normalizes legacy `/v1/audio/transcriptions` to `/post/speech/asr`.
+  - Gradium transcription adapter defaults to `/post/speech/asr`. (The legacy-path rewrite this commit added was later removed: `GRADIUM_TRANSCRIPTION_PATH` is now used verbatim.)
   - WAV uploads are converted to mono `pcm_16000` before the Gradium REST call.
   - `.env.example` now points `GRADIUM_API_BASE_URL` at `https://api.gradium.ai/api`.
 
@@ -47,7 +47,7 @@
 - Resampling to 16 kHz is now part of the compatibility path.
   - This solved the verified Gradium failure for the tested file.
   - If transcription quality issues appear on other audio shapes, inspect this path first.
-- `INGEST_API_KEY` exists in config/env, but route enforcement may still be absent unless added elsewhere later.
+- `INGEST_API_KEY` is enforced on `POST /ingest` via the `x-api-key` header (`app/main.py: require_ingest_api_key`). When the setting is unset or blank the check is skipped and the app logs a warning at startup, so local dev keeps working; `/health` is always unauthenticated.
 
 ## High-signal test commands
 - Local unit/integration checks:

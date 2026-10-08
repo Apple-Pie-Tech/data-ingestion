@@ -1,10 +1,20 @@
 import json
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from importlib import import_module
 from typing import Annotated
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
@@ -37,6 +47,10 @@ VectorStoreError = _vector_store.VectorStoreError
 logger = logging.getLogger(__name__)
 
 
+def _configured_ingest_api_key(settings: Settings) -> str:
+    return (settings.ingest_api_key or "").strip()
+
+
 def _parse_cors_allow_origins(raw_value: str) -> list[str]:
     return [origin for origin in (item.strip() for item in raw_value.split(",")) if origin]
 
@@ -55,6 +69,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_origins=cors_allow_origins,
         )
 
+    if not _configured_ingest_api_key(resolved_settings):
+        logger.warning(
+            "INGEST_API_KEY is not set; /ingest accepts unauthenticated requests"
+        )
+
     return application
 
 
@@ -64,6 +83,29 @@ app = create_app()
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+async def require_ingest_api_key(
+    settings: Annotated[Settings, Depends(get_settings)],
+    x_api_key: Annotated[str | None, Header()] = None,
+) -> None:
+    """Verify the ``x-api-key`` header against ``INGEST_API_KEY``.
+
+    When ``INGEST_API_KEY`` is unset or blank the check is **skipped**, not
+    failed. Failing closed would leave a fresh clone with no ``.env`` unable to
+    ingest anything, and local development is the path this service has to keep
+    working; ``create_app`` logs a warning so an unprotected deployment is not
+    silent. Set ``INGEST_API_KEY`` to turn the check on.
+
+    The 401 carries no detail about the expected key.
+    """
+    expected = _configured_ingest_api_key(settings)
+    if not expected:
+        return
+
+    provided = x_api_key or ""
+    if not secrets.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 async def get_ingestion_service(
@@ -128,7 +170,12 @@ async def parse_ingest_request(
     )
 
 
-@app.post("/ingest", response_model=IngestResult, response_model_exclude_none=True)
+@app.post(
+    "/ingest",
+    response_model=IngestResult,
+    response_model_exclude_none=True,
+    dependencies=[Depends(require_ingest_api_key)],
+)
 async def ingest(
     background_tasks: BackgroundTasks,
     request: Annotated[IngestRequest, Depends(parse_ingest_request)],
@@ -154,15 +201,24 @@ async def ingest(
         raise
     except IngestionValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Each handler below collapses a real failure into an opaque detail string.
+    # Log the traceback first: without it a broken dependency shows up as a bare
+    # 503 in the client and nothing at all in the service log, which is how the
+    # audio-storage breakage (ISSUES.md E54) stayed hidden.
     except AudioStorageError as exc:
+        logger.exception("ingest failed: audio storage unavailable")
         raise HTTPException(status_code=503, detail="audio_storage_unavailable") from exc
     except TranscriptionError as exc:
+        logger.exception("ingest failed: transcription unavailable")
         raise HTTPException(status_code=502, detail="transcription_unavailable") from exc
     except EmbeddingError as exc:
+        logger.exception("ingest failed: embeddings unavailable")
         raise HTTPException(status_code=502, detail="embedding_unavailable") from exc
     except VectorStoreError as exc:
+        logger.exception("ingest failed: vector store unavailable")
         raise HTTPException(status_code=503, detail="vector_store_unavailable") from exc
     except Exception as exc:
+        logger.exception("ingest failed with an unhandled error")
         raise HTTPException(status_code=500, detail="internal_server_error") from exc
 
 

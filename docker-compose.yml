@@ -1,3 +1,8 @@
+# Standalone compose for the ingestion service plus a Qdrant to talk to.
+# The repo root has its own docker-compose.yml with the shared local backing
+# services (Qdrant + Postgres + Azurite). This file deliberately does not
+# publish Qdrant's port so both stacks can be up at once; to use the shared
+# one instead, set QDRANT_URL to it and skip the qdrant service here.
 services:
   app:
     build:
@@ -5,34 +10,44 @@ services:
     depends_on:
       - qdrant
     environment:
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://127.0.0.1:8081,http://localhost:8081,http://127.0.0.1:8080,http://localhost:8080}
+      STORY_LABELING_ENABLED: ${STORY_LABELING_ENABLED:-false}
+      STORY_LABELING_API_BASE_URL: ${STORY_LABELING_API_BASE_URL:-}
+      STORY_LABELING_TIMEOUT_SECONDS: ${STORY_LABELING_TIMEOUT_SECONDS:-60}
       INGEST_API_KEY: ${INGEST_API_KEY:-local-dev-ingest-key}
       MAX_AUDIO_BYTES: ${MAX_AUDIO_BYTES:-25000000}
       REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-60}
+      AUDIO_STORAGE_ENABLED: ${AUDIO_STORAGE_ENABLED:-false}
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:-}
+      AZURE_STORAGE_CONTAINER: ${AZURE_STORAGE_CONTAINER:-ingest-audio}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-apple_pie_story_chunks}
-      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-https://example.invalid/openai/v1/}
-      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-fake-azure-openai-api-key}
-      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-10-21}
-      AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT: ${AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT:-text-embedding-3-large}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
-      EMBEDDING_DIM: ${EMBEDDING_DIM:-3072}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      BEDROCK_EMBEDDINGS_MODEL: ${BEDROCK_EMBEDDINGS_MODEL:-cohere.embed-v4:0}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-cohere.embed-v4:0}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
       SEMANTIC_SIMILARITY_THRESHOLD: ${SEMANTIC_SIMILARITY_THRESHOLD:-0.8}
       MIN_CHUNK_CHARS: ${MIN_CHUNK_CHARS:-350}
       MAX_CHUNK_CHARS: ${MAX_CHUNK_CHARS:-1400}
+      MAX_CHUNK_TOKENS: ${MAX_CHUNK_TOKENS:-350}
+      SEMANTIC_TOKENIZER_ENCODING: ${SEMANTIC_TOKENIZER_ENCODING:-cl100k_base}
       CHUNK_OVERLAP_SENTENCES: ${CHUNK_OVERLAP_SENTENCES:-1}
       GRADIUM_API_BASE_URL: ${GRADIUM_API_BASE_URL:-https://example.invalid}
       GRADIUM_API_KEY: ${GRADIUM_API_KEY:-fake-gradium-api-key}
       GRADIUM_TRANSCRIPTION_MODEL: ${GRADIUM_TRANSCRIPTION_MODEL:-demo-transcription-model}
       GRADIUM_TRANSCRIPTION_TRANSPORT: ${GRADIUM_TRANSCRIPTION_TRANSPORT:-rest}
-      GRADIUM_TRANSCRIPTION_PATH: ${GRADIUM_TRANSCRIPTION_PATH:-/v1/audio/transcriptions}
+      GRADIUM_TRANSCRIPTION_PATH: ${GRADIUM_TRANSCRIPTION_PATH:-/post/speech/asr}
+      GRADIUM_LANGUAGE: ${GRADIUM_LANGUAGE:-en}
       GRADIUM_TIMEOUT_SECONDS: ${GRADIUM_TIMEOUT_SECONDS:-60}
     ports:
       - "8000:8000"
 
   qdrant:
     image: qdrant/qdrant:v1.13.4
-    ports:
-      - "6333:6333"
+    # Not published on the host: the root docker-compose.yml already binds 6333.
+    expose:
+      - "6333"
     volumes:
       - qdrant_storage:/qdrant/storage
 

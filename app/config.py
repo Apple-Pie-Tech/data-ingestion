@@ -18,23 +18,32 @@ class Settings(BaseSettings):
     max_audio_bytes: int = 25_000_000
     request_timeout_seconds: int = 60
     audio_storage_enabled: bool = False
-    azure_blob_connection_string: str | None = None
-    azure_blob_container: str = "ingest-audio"
+    azure_storage_connection_string: str | None = None
+    azure_storage_container: str = "ingest-audio"
 
-    qdrant_url: str = "http://qdrant:6333"
+    qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None
     qdrant_collection: str = "apple_pie_story_chunks"
 
-    azure_openai_endpoint: str | None = None
-    azure_openai_api_key: str | None = None
-    azure_openai_api_version: str = "2024-10-21"
-    azure_openai_embeddings_deployment: str = "text-embedding-3-large"
-    embedding_model: str = "text-embedding-3-large"
-    embedding_dim: int = 3072
+    aws_region: str = "us-east-1"
+    # Cohere Embed v4 defaults to 1536 dimensions, which is what the existing vector
+    # index was built for. Verified against the live account before the migration:
+    # changing this model almost certainly changes embedding_dim too.
+    bedrock_embeddings_model: str = "cohere.embed-v4:0"
+    embedding_model: str = "cohere.embed-v4:0"
+    embedding_dim: int = 1536
 
     semantic_similarity_threshold: float = 0.8
     min_chunk_chars: int = 350
     max_chunk_chars: int = 1400
+    # Chonkie's chunk_size is a TOKEN budget, not a character budget. It previously
+    # received max_chunk_chars (1400), asking for chunks ~4x larger than intended;
+    # 350 tokens is the token-equivalent of 1400 characters.
+    max_chunk_tokens: int = 350
+    # Tokenizer Chonkie counts chunk_size with. tiktoken fetches the BPE table on
+    # first use, so the Docker build warms TIKTOKEN_CACHE_DIR to keep it off the
+    # Lambda cold-start path.
+    semantic_tokenizer_encoding: str = "cl100k_base"
     chunk_overlap_sentences: int = 1
 
     gradium_api_base_url: str | None = None
@@ -42,6 +51,7 @@ class Settings(BaseSettings):
     gradium_transcription_model: str | None = None
     gradium_transcription_transport: str = "rest"
     gradium_transcription_path: str = "/post/speech/asr"
+    gradium_language: str = "en"
     gradium_timeout_seconds: int = 60
 
 

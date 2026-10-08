@@ -41,6 +41,7 @@ class _GradiumRequestConfig:
     api_key: str
     path: str
     model: str | None
+    language: str
     timeout_seconds: float
 
 
@@ -71,6 +72,7 @@ class GradiumTranscriber:
             api_key=settings.gradium_api_key,
             path=_normalize_transcription_path(settings.gradium_transcription_path),
             model=settings.gradium_transcription_model,
+            language=settings.gradium_language,
             timeout_seconds=float(settings.gradium_timeout_seconds),
         )
         self._client = client or httpx.AsyncClient(
@@ -95,7 +97,7 @@ class GradiumTranscriber:
             filename=filename,
             content_type=content_type,
         )
-        params: dict[str, str] = {}
+        params: dict[str, str] = {"json_config": json.dumps({"language": self._config.language})}
         if self._config.model:
             params["model_name"] = self._config.model
         if prepared_request.input_format:
@@ -185,10 +187,13 @@ def _resolve_audio_content_type(*, filename: str | None, content_type: str | Non
 
 
 def _normalize_transcription_path(path: str) -> str:
-    normalized = path.strip() or "/post/speech/asr"
-    if normalized == "/v1/audio/transcriptions":
-        return "/post/speech/asr"
-    return normalized
+    """Trim the configured path, falling back to the default when it is blank.
+
+    The value is otherwise used exactly as configured: rewriting it in code
+    would make the setting a no-op and stop the service being pointed at an
+    OpenAI-compatible Whisper endpoint.
+    """
+    return path.strip() or "/post/speech/asr"
 
 
 def _prepare_audio_request(

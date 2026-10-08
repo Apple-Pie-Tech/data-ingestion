@@ -33,7 +33,7 @@ POST /ingest
       -> if text is supplied, use it
       -> if audio is supplied, call Gradium transcription API
   -> pass transcript to Chonkie SemanticChunker
-  -> Chonkie embeds candidate sentences/windows with Azure-hosted text-embedding-3-large
+  -> Chonkie embeds candidate sentences/windows with Azure-hosted text-embedding-3-small
   -> Chonkie returns semantic chunks around meaning shifts
   -> embed final chunks with the same Azure embedding deployment
   -> create or reuse matching Qdrant collection
@@ -98,7 +98,7 @@ async def transcribe_audio(audio_path: str) -> str:
 
 Open question resolved: **Is the provider Gradio or Gradium?** It is Gradium. Remove `gradio_client` from the plan and build a `GradiumTranscriber` adapter using `httpx`.
 
-Current implementation note: the service normalizes legacy `/v1/audio/transcriptions` config to `/post/speech/asr`, sends the audio bytes as the raw request body, uses the `x-api-key` header, and converts WAV uploads to mono `pcm_16000` when possible for Gradium compatibility.
+Current implementation note: the service uses `GRADIUM_TRANSCRIPTION_PATH` exactly as configured (default `/post/speech/asr`, so it can be pointed at a local OpenAI-compatible endpoint), sends the audio bytes as the raw request body, uses the `x-api-key` header, and converts WAV uploads to mono `pcm_16000` when possible for Gradium compatibility.
 
 ### 3. Proper semantic chunking with Chonkie
 
@@ -110,7 +110,7 @@ Why Chonkie is the best fit for this repo:
 
 - It is focused on chunking rather than being a full RAG framework.
 - It supports semantic chunking from embedding similarity.
-- It has Azure OpenAI embedding support, matching our `text-embedding-3-large` requirement.
+- It has Azure OpenAI embedding support, matching our `text-embedding-3-small` requirement.
 - It supports custom embedding providers if the Azure integration needs wrapping.
 - It supports batch and async chunking paths, which matters for ingestion throughput.
 
@@ -153,9 +153,9 @@ Required configuration:
 AZURE_OPENAI_ENDPOINT=<https://...openai.azure.com/openai/v1/>
 AZURE_OPENAI_API_KEY=<secret>
 AZURE_OPENAI_API_VERSION=<api-version>
-AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=<deployment-name-for-text-embedding-3-large>
-EMBEDDING_MODEL=text-embedding-3-large
-EMBEDDING_DIM=3072
+AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=<deployment-name-for-text-embedding-3-small>
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIM=1536
 ```
 
 Why:
@@ -171,7 +171,7 @@ Use batched embedding calls wherever possible:
 - one batch through Chonkie for semantic candidate windows
 - one batch for final chunks
 
-Open question resolved: **What vector size should Qdrant use?** Default to `3072` for `text-embedding-3-large` unless the Azure deployment/request is configured to return a reduced dimension. The Qdrant collection size must exactly match the actual embedding length returned by Azure.
+Open question resolved: **What vector size should Qdrant use?** Use `1536` for `text-embedding-3-small`, which is the live deployment. Keep it in sync with `EMBEDDING_DIM`; a mismatch fails at collection validation.
 
 ### 5. Qdrant storage
 
@@ -194,7 +194,7 @@ Each Qdrant point:
     "chunk_index": 0,
     "text": "chunk text",
     "source": "audio|text",
-    "embedding_model": "text-embedding-3-large",
+    "embedding_model": "text-embedding-3-small",
     "semantic_chunking": {
       "break_threshold": 0.72,
       "overlap_sentences": 1
@@ -377,7 +377,7 @@ export QDRANT_URL=http://localhost:6333
 export AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 export AZURE_OPENAI_API_KEY=replace-me
 export AZURE_OPENAI_API_VERSION=2024-10-21
-export AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=text-embedding-3-large
+export AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT=text-embedding-3-small
 export GRADIUM_API_BASE_URL=https://your-gradium-host
 export GRADIUM_API_KEY=replace-me
 export GRADIUM_TRANSCRIPTION_MODEL=whisper-1
@@ -398,7 +398,7 @@ uv run pytest tests/test_external_smoke.py -k audio_external
 | Audio-to-text provider | Use Gradium, not Gradio. Build a small HTTP adapter around Gradium's transcription API. |
 | Exact Gradium API contract | Still needs credentials/API docs confirmation. Keep the adapter isolated so the payload can change without touching ingestion logic. |
 | Gradium REST vs WebSocket | Use REST for complete uploaded audio files. Defer WebSocket until live streaming is required. |
-| Embedding provider | Azure OpenAI deployment of `text-embedding-3-large`; pass the deployment name as the API model value. |
+| Embedding provider | Azure OpenAI deployment of `text-embedding-3-small`; pass the deployment name as the API model value. |
 | Semantic chunking library | Use Chonkie `SemanticChunker` with Azure OpenAI embeddings. Keep a thin adapter so we can swap to LangChain/LlamaIndex later if needed. |
 | Package management | Use `uv`, `pyproject.toml`, and committed `uv.lock`. No `requirements.txt`. |
 | Deployment | Docker container only. The app should not assume host-local execution. |
@@ -432,7 +432,7 @@ The hackathon MVP is done when:
 - `POST /ingest` accepts metadata plus text or audio.
 - Audio-only requests are transcribed through configured Gradium API.
 - Text is semantically chunked through Chonkie using Azure embedding similarity.
-- Each final chunk is embedded with Azure-hosted `text-embedding-3-large`.
+- Each final chunk is embedded with Azure-hosted `text-embedding-3-small`.
 - Chunks are batch upserted into Qdrant with stable IDs and metadata payload.
 - A text-only smoke test and an audio smoke test both produce searchable Qdrant points.
 
@@ -441,7 +441,7 @@ The hackathon MVP is done when:
 - **Gradium API contract unknown:** confirm exact endpoint, auth, file upload format, response schema, limits, and latency before implementation.
 - **Gradium feature assumptions:** confirm whether timestamps, diarization, partial results, or language hints are available before planning around them.
 - **Azure embedding dimension mismatch:** Qdrant collection size must match the actual embedding length returned by the Azure deployment.
-- **Vector storage size:** full `text-embedding-3-large` vectors are 3072 dimensions, roughly 12 KB per vector in float32 before payload/index overhead.
+- **Vector storage size:** `text-embedding-3-small` vectors are 1536 dimensions, roughly 6 KB per vector in float32 before payload overhead.
 - **Embedding cost/latency:** semantic chunking adds extra embedding calls before final chunk embedding; use batching and avoid re-embedding candidate windows outside Chonkie.
 - **Chonkie/Azure integration fit:** confirm the Chonkie Azure embedding wrapper supports the exact Azure endpoint, deployment-name, dimensions, and API-version parameters we need. If not, implement a small custom Chonkie embedding adapter.
 - **Threshold tuning:** Chonkie defaults may be good enough, but semantic break thresholds still need a few real transcripts to tune.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from importlib import import_module
+import json
 import wave
 
 import httpx
@@ -34,6 +35,8 @@ async def test_gradium_transcriber_returns_transcript_and_sends_expected_request
     def handler(request: httpx.Request) -> httpx.Response:
         seen_request["method"] = request.method
         seen_request["url"] = str(request.url)
+        seen_request["path"] = request.url.path
+        seen_request["params"] = dict(request.url.params)
         seen_request["api_key"] = request.headers.get("x-api-key", "")
         seen_request["content_type"] = request.headers.get("content-type", "")
         seen_request["body"] = request.content
@@ -63,7 +66,11 @@ async def test_gradium_transcriber_returns_transcript_and_sends_expected_request
     assert transcript == "hello apple pie"
     body = seen_request["body"]
     assert seen_request["method"] == "POST"
-    assert seen_request["url"] == "https://gradium.example/post/speech/asr?model_name=default"
+    assert seen_request["path"] == "/post/speech/asr"
+    assert seen_request["params"] == {
+        "json_config": '{"language": "en"}',
+        "model_name": "default",
+    }
     assert seen_request["api_key"] == "super-secret-key"
     assert seen_request["content_type"] == "audio/pcm"
     assert isinstance(body, bytes)
@@ -71,7 +78,7 @@ async def test_gradium_transcriber_returns_transcript_and_sends_expected_request
 
 
 @pytest.mark.asyncio
-async def test_gradium_transcriber_normalizes_wav_and_remaps_legacy_rest_path() -> None:
+async def test_gradium_transcriber_normalizes_wav_and_keeps_the_configured_path() -> None:
     seen_request: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -91,7 +98,7 @@ async def test_gradium_transcriber_normalizes_wav_and_remaps_legacy_rest_path() 
         transport=httpx.MockTransport(handler),
     )
     transcriber = GradiumTranscriber(
-        make_settings(gradium_transcription_path="/v1/audio/transcriptions"),
+        make_settings(gradium_transcription_path="/v1/whisper/transcribe"),
         client=client,
     )
     wav_bytes = build_wav_bytes(sample_rate=48_000, sample_count=4_800)
@@ -107,14 +114,54 @@ async def test_gradium_transcriber_normalizes_wav_and_remaps_legacy_rest_path() 
 
     body = seen_request["body"]
     assert transcript == "hello"
-    assert seen_request["path"] == "/post/speech/asr"
+    assert seen_request["path"] == "/v1/whisper/transcribe"
     assert seen_request["params"] == {
+        "json_config": '{"language": "en"}',
         "model_name": "default",
         "input_format": "pcm_16000",
     }
     assert seen_request["content_type"] == "audio/pcm"
     assert isinstance(body, bytes)
     assert len(body) < len(wav_bytes)
+
+
+@pytest.mark.asyncio
+async def test_gradium_transcriber_uses_the_configured_path_verbatim() -> None:
+    """A configured path must be honoured as written.
+
+    Pointing the service at a local OpenAI-compatible Whisper endpoint is the
+    whole point of the setting, so no path may be rewritten in code.
+    """
+    seen_request: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_request["path"] = request.url.path
+        return httpx.Response(
+            200,
+            text='{"type":"text","text":"hello"}\n',
+            headers={"Content-Type": "application/x-ndjson"},
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://gradium.example",
+        transport=httpx.MockTransport(handler),
+    )
+    transcriber = GradiumTranscriber(
+        make_settings(gradium_transcription_path="/v1/audio/transcriptions"),
+        client=client,
+    )
+
+    try:
+        transcript = await transcriber.transcribe(
+            b"fake-audio-bytes",
+            filename="sample.pcm",
+            content_type="audio/pcm",
+        )
+    finally:
+        await transcriber.aclose()
+
+    assert transcript == "hello"
+    assert seen_request["path"] == "/v1/audio/transcriptions"
 
 
 @pytest.mark.asyncio
@@ -241,3 +288,36 @@ def build_wav_bytes(*, sample_rate: int, sample_count: int) -> bytes:
         wav_file.setframerate(sample_rate)
         wav_file.writeframes(samples.tobytes())
     return buffer.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_gradium_transcriber_sends_language_in_json_config() -> None:
+    seen_request: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_request["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            text='{"type":"text","text":"hello"}\n',
+            headers={"Content-Type": "application/x-ndjson"},
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://gradium.example",
+        transport=httpx.MockTransport(handler),
+    )
+    settings = make_settings().model_copy(update={"gradium_language": "fr"})
+    transcriber = GradiumTranscriber(settings, client=client)
+
+    try:
+        await transcriber.transcribe(
+            b"fake-audio-bytes",
+            filename="sample.pcm",
+            content_type="audio/pcm",
+        )
+    finally:
+        await transcriber.aclose()
+
+    params = seen_request["params"]
+    assert isinstance(params, dict)
+    assert json.loads(params["json_config"]) == {"language": "fr"}
