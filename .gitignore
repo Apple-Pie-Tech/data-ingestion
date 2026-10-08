@@ -1,2 +1,14 @@
 .env
 .idea
+
+# Python bytecode / caches
+__pycache__/
+*.pyc
+.ruff_cache/
+.pytest_cache/
+
+# Local venv
+.venv/
+
+# Audio test debris (see ISSUES.md E42)
+*.wav
