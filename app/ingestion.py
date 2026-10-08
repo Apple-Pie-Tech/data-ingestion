@@ -28,7 +28,7 @@ normalize_text = _semantic_chunking.normalize_text
 GradiumTranscriber = _transcription.GradiumTranscriber
 TranscriptionClient = _transcription.TranscriptionClient
 TranscriptionError = _transcription.TranscriptionError
-QdrantVectorStore = _vector_store.QdrantVectorStore
+S3VectorStore = _vector_store.S3VectorStore
 VectorStoreClient = _vector_store.VectorStoreClient
 VectorStoreError = _vector_store.VectorStoreError
 
@@ -243,7 +243,7 @@ class IngestionService:
 
     def _get_vector_store(self) -> VectorStoreClient:
         if self._vector_store is None:
-            self._vector_store = QdrantVectorStore(self._settings)
+            self._vector_store = S3VectorStore(self._settings)
         return self._vector_store
 
     async def _close_resource(self, resource: object | None) -> None:

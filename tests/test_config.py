@@ -22,7 +22,7 @@ def test_embedding_defaults_match_the_live_bedrock_model() -> None:
     """Cohere Embed v4 on Bedrock, verified to return 1536 dims against the account.
 
     A run without a .env must not build or validate a vector index at some other
-    width; that dies in QdrantVectorStore._ensure_collection. Changing
+    width; that dies in S3VectorStore._ensure_index. Changing
     bedrock_embeddings_model almost always means changing embedding_dim too.
     """
     settings = Settings(_env_file=None)

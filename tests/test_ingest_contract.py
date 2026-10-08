@@ -147,7 +147,7 @@ class FailingVectorStore:
         embedding_model: str,
         audio_url: str | None,
     ) -> int:
-        raise VectorStoreError("Qdrant upsert failed")
+        raise VectorStoreError("S3 Vectors put_vectors failed")
 
 
 class FailingAudioStorage:

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import import_module
-from types import SimpleNamespace
-from typing import cast
-from uuid import NAMESPACE_URL, UUID, uuid5
+from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -13,29 +13,26 @@ _config = import_module("app.config")
 _schemas = import_module("app.schemas")
 _semantic_chunking = import_module("app.semantic_chunking")
 _vector_store = import_module("app.vector_store")
-_qdrant_models = import_module("qdrant_client.http.models")
 
 Settings = _config.Settings
 IngestMetadata = _schemas.IngestMetadata
 Chunk = _semantic_chunking.Chunk
-QdrantVectorStore = _vector_store.QdrantVectorStore
+S3VectorStore = _vector_store.S3VectorStore
+VectorStoreError = _vector_store.VectorStoreError
 VectorStoreConfigurationError = _vector_store.VectorStoreConfigurationError
-Distance = _qdrant_models.Distance
-PointStruct = _qdrant_models.PointStruct
-VectorParams = _qdrant_models.VectorParams
+MAX_VECTORS_PER_PUT = _vector_store.MAX_VECTORS_PER_PUT
+NON_FILTERABLE_METADATA_KEYS = _vector_store.NON_FILTERABLE_METADATA_KEYS
 
 
-def make_settings(
-    *,
-    embedding_dim: int = 4,
-    qdrant_api_key: str | None = None,
-) -> Settings:
-    return Settings(
-        qdrant_url="http://qdrant:6333",
-        qdrant_api_key=qdrant_api_key,
-        qdrant_collection="apple_pie_story_chunks",
-        embedding_dim=embedding_dim,
-    )
+def make_settings(*, embedding_dim: int = 4, **overrides: Any) -> Settings:
+    values: dict[str, Any] = {
+        "s3_vector_bucket": "applepie-vectors",
+        "s3_vector_index": "apple-pie-story-chunks",
+        "aws_region": "us-east-1",
+        "embedding_dim": embedding_dim,
+    }
+    values.update(overrides)
+    return Settings(_env_file=None, **values)
 
 
 def make_metadata() -> IngestMetadata:
@@ -51,166 +48,144 @@ def make_chunks() -> list[Chunk]:
         Chunk(
             text="We peeled the apples and dusted them with cinnamon.",
             chunk_index=0,
-            metadata={
-                "similarity_threshold": 0.72,
-                "overlap_sentences": 1,
-            },
+            metadata={"similarity_threshold": 0.72, "overlap_sentences": 1},
         ),
         Chunk(
             text="Then we measured vector recall against the story archive.",
             chunk_index=1,
-            metadata={
-                "similarity_threshold": 0.72,
-                "overlap_sentences": 1,
-            },
+            metadata={"similarity_threshold": 0.72, "overlap_sentences": 1},
         ),
     ]
 
 
 @dataclass
-class FakeQdrantClient:
-    collection_exists_result: bool = False
-    collection_size: int = 4
+class FakeS3Vectors:
+    """Stands in for boto3's s3vectors client.
 
-    def __post_init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, object]]] = []
-        self.upserted_points: list[PointStruct] = []
+    Mirrors the behaviour probed against the live service: get_index reports the
+    index dimension, and put_vectors records whole batches.
+    """
 
-    async def collection_exists(self, collection_name: str, **kwargs: object) -> bool:
-        self.calls.append(
-            ("collection_exists", {"collection_name": collection_name, **kwargs})
-        )
-        return self.collection_exists_result
+    dimension: int = 4
+    get_index_error: Exception | None = None
+    put_error: Exception | None = None
+    index_payload: dict[str, Any] | None = None
+    calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    puts: list[list[dict[str, Any]]] = field(default_factory=list)
 
-    async def create_collection(
-        self,
-        collection_name: str,
-        vectors_config: VectorParams,
-        **kwargs: object,
-    ) -> bool:
-        self.calls.append(
-            (
-                "create_collection",
-                {
-                    "collection_name": collection_name,
-                    "vectors_config": vectors_config,
-                    **kwargs,
-                },
-            )
-        )
-        return True
+    def get_index(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("get_index", kwargs))
+        if self.get_index_error is not None:
+            raise self.get_index_error
+        if self.index_payload is not None:
+            return self.index_payload
+        return {
+            "index": {
+                "indexName": kwargs["indexName"],
+                "dimension": self.dimension,
+                "dataType": "float32",
+                "distanceMetric": "cosine",
+            }
+        }
 
-    async def get_collection(self, collection_name: str, **kwargs: object) -> object:
-        self.calls.append(("get_collection", {"collection_name": collection_name, **kwargs}))
-        return SimpleNamespace(
-            config=SimpleNamespace(
-                params=SimpleNamespace(
-                    vectors=SimpleNamespace(size=self.collection_size),
-                )
-            )
-        )
+    def put_vectors(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(("put_vectors", kwargs))
+        if self.put_error is not None:
+            raise self.put_error
+        self.puts.append(kwargs["vectors"])
+        return {}
 
-    async def upsert(
-        self,
-        collection_name: str,
-        points: list[PointStruct],
-        **kwargs: object,
-    ) -> object:
-        self.calls.append(
-            (
-                "upsert",
-                {
-                    "collection_name": collection_name,
-                    "points": points,
-                    **kwargs,
-                },
-            )
-        )
-        self.upserted_points = points
-        return SimpleNamespace(status="acknowledged")
+    @property
+    def vectors(self) -> list[dict[str, Any]]:
+        return [vector for batch in self.puts for vector in batch]
 
 
-class AsyncQdrantClientSpy:
-    created_kwargs: dict[str, object] | None = None
-
-    def __init__(self, **kwargs: object) -> None:
-        type(self).created_kwargs = kwargs
-
-    async def collection_exists(self, collection_name: str, **kwargs: object) -> bool:
-        raise AssertionError("unexpected call")
-
-    async def create_collection(self, *args: object, **kwargs: object) -> bool:
-        raise AssertionError("unexpected call")
-
-    async def get_collection(self, *args: object, **kwargs: object) -> object:
-        raise AssertionError("unexpected call")
-
-    async def upsert(self, *args: object, **kwargs: object) -> object:
-        raise AssertionError("unexpected call")
-
-
-def test_qdrant_cloud_api_key_is_passed_to_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_vector_store, "AsyncQdrantClient", AsyncQdrantClientSpy)
-
-    store = QdrantVectorStore(make_settings(qdrant_api_key="qdrant-secret"), client=None)
-
-    assert store is not None
-    assert AsyncQdrantClientSpy.created_kwargs == {
-        "url": "http://qdrant:6333",
-        "api_key": "qdrant-secret",
-    }
+def test_missing_bucket_is_a_configuration_error() -> None:
+    with pytest.raises(VectorStoreConfigurationError, match="S3_VECTOR_BUCKET"):
+        S3VectorStore(make_settings(s3_vector_bucket=None), client=FakeS3Vectors())
 
 
 @pytest.mark.asyncio
-async def test_deterministic_ids_and_payload_shape_for_upserted_chunks() -> None:
-    fake_client = FakeQdrantClient(collection_exists_result=False)
-    store = QdrantVectorStore(make_settings(), client=fake_client)
+async def test_deterministic_keys_and_flat_metadata_for_upserted_chunks() -> None:
+    """S3 Vectors rejects nested metadata, so the Qdrant payload is flattened.
+
+    Proven live: `Metadata values must be strings, numbers, booleans, or arrays`.
+    """
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(), client=fake)
 
     upserted = await store.upsert_chunks(
         metadata=make_metadata(),
         chunks=make_chunks(),
-        embeddings=[
-            [0.1, 0.2, 0.3, 0.4],
-            [0.5, 0.6, 0.7, 0.8],
-        ],
+        embeddings=[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]],
         source="text",
-        embedding_model="text-embedding-3-large",
+        embedding_model="cohere.embed-v4:0",
         audio_url=None,
     )
 
     assert upserted == 2
-    create_call = fake_client.calls[1]
-    assert create_call[0] == "create_collection"
-    vectors_config = cast(VectorParams, create_call[1]["vectors_config"])
-    assert vectors_config.size == 4
-    assert vectors_config.distance == Distance.COSINE
-
-    assert [UUID(str(point.id)) for point in fake_client.upserted_points] == [
-        uuid5(NAMESPACE_URL, "sample-input-001:0"),
-        uuid5(NAMESPACE_URL, "sample-input-001:1"),
+    assert [vector["key"] for vector in fake.vectors] == [
+        str(uuid5(NAMESPACE_URL, "sample-input-001:0")),
+        str(uuid5(NAMESPACE_URL, "sample-input-001:1")),
     ]
-
-    first_payload = fake_client.upserted_points[0].payload
-    assert first_payload == {
+    assert fake.vectors[0]["data"] == {"float32": [0.1, 0.2, 0.3, 0.4]}
+    assert fake.vectors[0]["metadata"] == {
         "input_id": "sample-input-001",
         "user_id": "user-123",
         "timestamp": "2025-05-01T12:30:00+00:00",
         "chunk_index": 0,
         "text": "We peeled the apples and dusted them with cinnamon.",
         "source": "text",
-        "embedding_model": "text-embedding-3-large",
-        "semantic_chunking": {
-            "break_threshold": 0.72,
-            "overlap_sentences": 1,
-        },
+        "embedding_model": "cohere.embed-v4:0",
+        "semantic_chunking_break_threshold": 0.72,
+        "semantic_chunking_overlap_sentences": 1,
     }
-    assert not {"api_key", "token", "secret", "password"} & set(first_payload)
 
 
 @pytest.mark.asyncio
-async def test_wrong_dimension_existing_collection_raises_configuration_error() -> None:
-    fake_client = FakeQdrantClient(collection_exists_result=True, collection_size=3)
-    store = QdrantVectorStore(make_settings(embedding_dim=4), client=fake_client)
+async def test_no_metadata_value_is_a_nested_object() -> None:
+    """The constraint that forced the flattening, asserted structurally."""
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(), client=fake)
+
+    await store.upsert_chunks(
+        metadata=make_metadata(),
+        chunks=make_chunks(),
+        embeddings=[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]],
+        source="text",
+        embedding_model="cohere.embed-v4:0",
+        audio_url="https://applepie-audio.s3.us-east-1.amazonaws.com/audio/x/source.wav",
+    )
+
+    for vector in fake.vectors:
+        for key, value in vector["metadata"].items():
+            assert not isinstance(value, dict), f"{key} is a nested object"
+            assert isinstance(value, str | int | float | bool | list), f"{key} is {type(value)}"
+
+
+@pytest.mark.asyncio
+async def test_no_credential_shaped_keys_reach_the_payload() -> None:
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(), client=fake)
+
+    await store.upsert_chunks(
+        metadata=make_metadata(),
+        chunks=make_chunks()[:1],
+        embeddings=[[0.1, 0.2, 0.3, 0.4]],
+        source="text",
+        embedding_model="cohere.embed-v4:0",
+        audio_url=None,
+    )
+
+    metadata = fake.vectors[0]["metadata"]
+    assert not {"api_key", "token", "secret", "password"} & set(metadata)
+
+
+@pytest.mark.asyncio
+async def test_index_dimension_mismatch_raises_before_any_write() -> None:
+    """Writing 1536-wide vectors into a differently sized index must not start."""
+    fake = FakeS3Vectors(dimension=3)
+    store = S3VectorStore(make_settings(embedding_dim=4), client=fake)
 
     with pytest.raises(VectorStoreConfigurationError) as exc_info:
         await store.upsert_chunks(
@@ -218,30 +193,212 @@ async def test_wrong_dimension_existing_collection_raises_configuration_error() 
             chunks=make_chunks()[:1],
             embeddings=[[0.1, 0.2, 0.3, 0.4]],
             source="audio",
-            embedding_model="text-embedding-3-large",
+            embedding_model="cohere.embed-v4:0",
             audio_url=None,
         )
 
     assert "expected 4, got 3" in str(exc_info.value)
-    assert [name for name, _ in fake_client.calls] == ["collection_exists", "get_collection"]
-    assert fake_client.upserted_points == []
+    assert [name for name, _ in fake.calls] == ["get_index"]
+    assert fake.puts == []
 
 
 @pytest.mark.asyncio
-async def test_audio_payload_includes_shared_audio_url() -> None:
-    fake_client = FakeQdrantClient(collection_exists_result=False)
-    store = QdrantVectorStore(make_settings(), client=fake_client)
+async def test_a_missing_index_is_a_configuration_error_not_a_write_failure() -> None:
+    """Terraform creates the index; the service only validates it."""
+    fake = FakeS3Vectors(get_index_error=RuntimeError("NotFoundException"))
+    store = S3VectorStore(make_settings(), client=fake)
+
+    with pytest.raises(VectorStoreConfigurationError, match="is unavailable"):
+        await store.upsert_chunks(
+            metadata=make_metadata(),
+            chunks=make_chunks()[:1],
+            embeddings=[[0.1, 0.2, 0.3, 0.4]],
+            source="text",
+            embedding_model="cohere.embed-v4:0",
+            audio_url=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_index_is_validated_once_not_per_request() -> None:
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(), client=fake)
+
+    for _ in range(3):
+        await store.upsert_chunks(
+            metadata=make_metadata(),
+            chunks=make_chunks()[:1],
+            embeddings=[[0.1, 0.2, 0.3, 0.4]],
+            source="text",
+            embedding_model="cohere.embed-v4:0",
+            audio_url=None,
+        )
+
+    assert [name for name, _ in fake.calls].count("get_index") == 1
+
+
+@pytest.mark.asyncio
+async def test_audio_url_is_stored_on_every_chunk_of_an_audio_ingest() -> None:
+    audio_url = (
+        "https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav"
+    )
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(), client=fake)
+
+    await store.upsert_chunks(
+        metadata=make_metadata(),
+        chunks=make_chunks(),
+        embeddings=[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]],
+        source="audio",
+        embedding_model="cohere.embed-v4:0",
+        audio_url=audio_url,
+    )
+
+    assert all(vector["metadata"]["audio_url"] == audio_url for vector in fake.vectors)
+
+
+@pytest.mark.asyncio
+async def test_long_inputs_are_split_across_put_vectors_calls() -> None:
+    """PutVectors accepts at most 500 vectors; a long document exceeds that."""
+    count = MAX_VECTORS_PER_PUT + 7
+    chunks = [
+        Chunk(
+            text=f"chunk {index}",
+            chunk_index=index,
+            metadata={"similarity_threshold": 0.72, "overlap_sentences": 1},
+        )
+        for index in range(count)
+    ]
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(), client=fake)
+
+    upserted = await store.upsert_chunks(
+        metadata=make_metadata(),
+        chunks=chunks,
+        embeddings=[[0.1, 0.2, 0.3, 0.4]] * count,
+        source="text",
+        embedding_model="cohere.embed-v4:0",
+        audio_url=None,
+    )
+
+    assert upserted == count
+    assert [len(batch) for batch in fake.puts] == [MAX_VECTORS_PER_PUT, 7]
+    # Every chunk reaches the index exactly once, in order.
+    assert [vector["metadata"]["chunk_index"] for vector in fake.vectors] == list(range(count))
+
+
+@pytest.mark.asyncio
+async def test_chunk_and_embedding_count_mismatch_is_rejected() -> None:
+    store = S3VectorStore(make_settings(), client=FakeS3Vectors())
+
+    with pytest.raises(VectorStoreError, match="count mismatch"):
+        await store.upsert_chunks(
+            metadata=make_metadata(),
+            chunks=make_chunks(),
+            embeddings=[[0.1, 0.2, 0.3, 0.4]],
+            source="text",
+            embedding_model="cohere.embed-v4:0",
+            audio_url=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_per_chunk_dimension_mismatch_names_the_chunk() -> None:
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(embedding_dim=4), client=fake)
+
+    with pytest.raises(VectorStoreError, match="chunk 1"):
+        await store.upsert_chunks(
+            metadata=make_metadata(),
+            chunks=make_chunks(),
+            embeddings=[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6]],
+            source="text",
+            embedding_model="cohere.embed-v4:0",
+            audio_url=None,
+        )
+
+    assert fake.puts == []
+
+
+@pytest.mark.asyncio
+async def test_a_transport_failure_is_wrapped_as_a_vector_store_error() -> None:
+    """app/main.py maps VectorStoreError to a 503; a raw ClientError is a 500."""
+    fake = FakeS3Vectors(put_error=RuntimeError("ThrottlingException"))
+    store = S3VectorStore(make_settings(), client=fake)
+
+    with pytest.raises(VectorStoreError, match="put_vectors failed"):
+        await store.upsert_chunks(
+            metadata=make_metadata(),
+            chunks=make_chunks()[:1],
+            embeddings=[[0.1, 0.2, 0.3, 0.4]],
+            source="text",
+            embedding_model="cohere.embed-v4:0",
+            audio_url=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_oversized_filterable_metadata_fails_with_a_readable_error() -> None:
+    """Filterable metadata is capped at 2048 bytes, proven live.
+
+    `text` is exempt because the index declares it non-filterable, which is the
+    only reason a 1400-character chunk fits at all. A long value in any other
+    key must name the limit instead of surfacing a bare 400.
+    """
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(), client=fake)
+    chunk = Chunk(
+        text="x" * 5000,
+        chunk_index=0,
+        metadata={"similarity_threshold": 0.72, "overlap_sentences": 1},
+    )
+
+    # The oversized `text` alone must NOT trip the guard.
+    await store.upsert_chunks(
+        metadata=make_metadata(),
+        chunks=[chunk],
+        embeddings=[[0.1, 0.2, 0.3, 0.4]],
+        source="text",
+        embedding_model="cohere.embed-v4:0",
+        audio_url=None,
+    )
+    assert len(fake.vectors) == 1
+
+    with pytest.raises(VectorStoreError, match="2048-byte"):
+        await store.upsert_chunks(
+            metadata=make_metadata(),
+            chunks=[chunk],
+            embeddings=[[0.1, 0.2, 0.3, 0.4]],
+            source="text",
+            embedding_model="m" * 3000,
+            audio_url=None,
+        )
+
+
+def test_text_and_audio_url_are_declared_non_filterable() -> None:
+    """These names are frozen at index creation and cannot be changed later.
+
+    Terraform creates the index from this list, so changing it means rebuilding
+    the index and re-embedding the corpus.
+    """
+    assert "text" in NON_FILTERABLE_METADATA_KEYS
+    assert "audio_url" in NON_FILTERABLE_METADATA_KEYS
+    assert len(NON_FILTERABLE_METADATA_KEYS) <= 10
+
+
+@pytest.mark.asyncio
+async def test_metadata_is_json_serialisable() -> None:
+    """botocore serialises the metadata document; a stray type fails at runtime."""
+    fake = FakeS3Vectors()
+    store = S3VectorStore(make_settings(), client=fake)
 
     await store.upsert_chunks(
         metadata=make_metadata(),
         chunks=make_chunks()[:1],
         embeddings=[[0.1, 0.2, 0.3, 0.4]],
-        source="audio",
-        embedding_model="text-embedding-3-large",
-        audio_url="https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav",
+        source="text",
+        embedding_model="cohere.embed-v4:0",
+        audio_url=None,
     )
 
-    first_payload = fake_client.upserted_points[0].payload
-    assert first_payload["audio_url"] == (
-        "https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav"
-    )
+    json.dumps(fake.vectors[0]["metadata"])

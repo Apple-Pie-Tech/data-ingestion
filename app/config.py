@@ -23,9 +23,11 @@ class Settings(BaseSettings):
     # canonical unsigned one and data-provision-api presigns it at read time.
     s3_audio_bucket: str | None = None
 
-    qdrant_url: str = "http://localhost:6333"
-    qdrant_api_key: str | None = None
-    qdrant_collection: str = "apple_pie_story_chunks"
+    # S3 Vectors bucket and index, both created by Terraform. The index pins the
+    # dimension and the non-filterable metadata keys at creation time, so this
+    # service validates rather than creates it.
+    s3_vector_bucket: str | None = None
+    s3_vector_index: str = "apple-pie-story-chunks"
 
     aws_region: str = "us-east-1"
     # Cohere Embed v4 defaults to 1536 dimensions, which is what the existing vector

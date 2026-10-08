@@ -1,14 +1,17 @@
-# Standalone compose for the ingestion service plus a Qdrant to talk to.
-# The repo root has its own docker-compose.yml with the shared local backing
-# services (Qdrant + Postgres + Azurite). This file deliberately does not
-# publish Qdrant's port so both stacks can be up at once; to use the shared
-# one instead, set QDRANT_URL to it and skip the qdrant service here.
+# Standalone compose for the ingestion service.
+#
+# There is no local backing service left to run: vectors live in S3 Vectors,
+# audio in S3, and embeddings come from Bedrock, none of which has a local
+# emulator. The container therefore needs AWS credentials to do real work.
+# `/health` stays up without them, which is what this file is for.
+#
+# Credentials are passed through from the host rather than written here. If they
+# come from `aws login`, export them first:
+#   eval "$(aws configure export-credentials --format env)"
 services:
   app:
     build:
       context: .
-    depends_on:
-      - qdrant
     environment:
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://127.0.0.1:8081,http://localhost:8081,http://127.0.0.1:8080,http://localhost:8080}
       STORY_LABELING_ENABLED: ${STORY_LABELING_ENABLED:-false}
@@ -19,9 +22,8 @@ services:
       REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-60}
       AUDIO_STORAGE_ENABLED: ${AUDIO_STORAGE_ENABLED:-false}
       S3_AUDIO_BUCKET: ${S3_AUDIO_BUCKET:-}
-      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
-      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
-      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-apple_pie_story_chunks}
+      S3_VECTOR_BUCKET: ${S3_VECTOR_BUCKET:-}
+      S3_VECTOR_INDEX: ${S3_VECTOR_INDEX:-apple-pie-story-chunks}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       BEDROCK_EMBEDDINGS_MODEL: ${BEDROCK_EMBEDDINGS_MODEL:-cohere.embed-v4:0}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-cohere.embed-v4:0}
@@ -39,16 +41,8 @@ services:
       GRADIUM_TRANSCRIPTION_PATH: ${GRADIUM_TRANSCRIPTION_PATH:-/post/speech/asr}
       GRADIUM_LANGUAGE: ${GRADIUM_LANGUAGE:-en}
       GRADIUM_TIMEOUT_SECONDS: ${GRADIUM_TIMEOUT_SECONDS:-60}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
     ports:
       - "8000:8000"
-
-  qdrant:
-    image: qdrant/qdrant:v1.13.4
-    # Not published on the host: the root docker-compose.yml already binds 6333.
-    expose:
-      - "6333"
-    volumes:
-      - qdrant_storage:/qdrant/storage
-
-volumes:
-  qdrant_storage:

@@ -34,8 +34,8 @@ SAMPLE_WAV_PATH = Path(__file__).parent / "fixtures" / "sample.wav"
 # that are configured correctly. AWS_REGION is the one value that has no sane
 # default for this stack (Bedrock entitlement is per region).
 TEXT_SMOKE_ENV_VARS = (
-    "QDRANT_URL",
     "AWS_REGION",
+    "S3_VECTOR_BUCKET",
 )
 AUDIO_SMOKE_ENV_VARS = TEXT_SMOKE_ENV_VARS + (
     "S3_AUDIO_BUCKET",

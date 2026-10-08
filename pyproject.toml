@@ -20,7 +20,6 @@ dependencies = [
   # needed -- Chonkie's SemanticChunker counts chunk_size with it -- so it is explicit now.
   "chonkie>=0.5.0",
   "tiktoken>=0.7.0",
-  "qdrant-client>=1.11.0",
   "numpy>=2.0.0",
 ]
 
