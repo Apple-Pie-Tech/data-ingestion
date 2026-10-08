@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 import re
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+from urllib.parse import quote
 
 _config = import_module("app.config")
 
@@ -22,7 +24,7 @@ class AudioStorageConfigurationError(AudioStorageError):
 
 @dataclass(frozen=True)
 class StoredAudio:
-    blob_name: str
+    object_key: str
     url: str
 
 
@@ -37,47 +39,46 @@ class AudioStorageClient(Protocol):
         content_type: str | None = None,
     ) -> StoredAudio: ...
 
-    async def aclose(self) -> None:
-        """Release the underlying async client's aiohttp session.
-
-        ``IngestionService.aclose`` discovers this by name; without it the
-        session leaked on every request (ISSUES.md E58).
-        """
-        client = getattr(self, "_blob_service_client", None)
-        if client is None:
-            return
-        await client.close()
+    async def aclose(self) -> None: ...
 
     async def delete_audio(self, stored_audio: StoredAudio) -> None: ...
 
 
-class AzureBlobAudioStorage:
-    def __init__(self, settings: Settings) -> None:
+class S3AudioStorage:
+    """Stores ingested audio in S3 under ``audio/{input_id}/source{suffix}``.
+
+    boto3 is synchronous, so every call hops to a worker thread. The service's
+    other AWS client (``app/embeddings.py``) does the same: one idiom for both is
+    worth more than adding aioboto3 for the two calls this makes per request.
+
+    The bucket is created by Terraform, so there is no create-if-missing step
+    here. That is deliberate -- an application that can create its own bucket
+    needs ``s3:CreateBucket``, and the whole point of the per-function IAM roles
+    is that this one can only write to the one bucket it owns.
+    """
+
+    def __init__(self, settings: Settings, *, client: Any | None = None) -> None:
         if not settings.audio_storage_enabled:
             raise AudioStorageConfigurationError("audio storage is disabled")
 
-        if not settings.azure_storage_connection_string:
-            raise AudioStorageConfigurationError("AZURE_STORAGE_CONNECTION_STRING is required")
+        if not settings.s3_audio_bucket:
+            raise AudioStorageConfigurationError("S3_AUDIO_BUCKET is required")
 
-        if not settings.azure_storage_container:
-            raise AudioStorageConfigurationError("AZURE_STORAGE_CONTAINER is required")
+        self._bucket = settings.s3_audio_bucket
+        self._region = settings.aws_region
+
+        if client is not None:
+            self._client = client
+            return
 
         try:
-            azure_blob = import_module("azure.storage.blob")
-            azure_blob_async = import_module("azure.storage.blob.aio")
-            azure_core_exceptions = import_module("azure.core.exceptions")
+            boto3 = import_module("boto3")
         except ModuleNotFoundError as exc:
             raise AudioStorageConfigurationError(
-                "azure-storage-blob dependency is required for audio storage"
+                "boto3 dependency is required for audio storage"
             ) from exc
 
-        self._blob_service_client = azure_blob_async.BlobServiceClient.from_connection_string(
-            settings.azure_storage_connection_string
-        )
-        self._content_settings_cls = azure_blob.ContentSettings
-        self._resource_exists_error = azure_core_exceptions.ResourceExistsError
-        self._container_name = settings.azure_storage_container
-        self._container_ready = False
+        self._client = boto3.client("s3", region_name=settings.aws_region)
 
     async def store_audio(
         self,
@@ -87,56 +88,98 @@ class AzureBlobAudioStorage:
         filename: str | None = None,
         content_type: str | None = None,
     ) -> StoredAudio:
-        await self._ensure_container()
-        blob_name = _build_blob_name(
+        object_key = _build_object_key(
             input_id=input_id,
             filename=filename,
             content_type=content_type,
         )
-        blob_client = self._blob_service_client.get_blob_client(
-            container=self._container_name,
-            blob=blob_name,
-        )
-        resolved_content_type = _resolve_content_type(content_type, blob_name)
-        content_settings = self._content_settings_cls(content_type=resolved_content_type)
-        await blob_client.upload_blob(audio_bytes, overwrite=True, content_settings=content_settings)
-        return StoredAudio(blob_name=blob_name, url=blob_client.url)
+        resolved_content_type = _resolve_content_type(content_type, object_key)
+
+        try:
+            # put_object overwrites by default, which is the behaviour the Azure
+            # path asked for explicitly with overwrite=True. No ACL is passed:
+            # object keys derive from a client-supplied input_id, so a public
+            # object would expose guessable URLs to private voice recordings.
+            # Readers get a presigned URL instead.
+            await asyncio.to_thread(
+                self._client.put_object,
+                Bucket=self._bucket,
+                Key=object_key,
+                Body=audio_bytes,
+                ContentType=resolved_content_type,
+            )
+        except Exception as exc:
+            raise AudioStorageError(
+                f"failed to store {object_key} in s3://{self._bucket}: {exc}"
+            ) from exc
+
+        return StoredAudio(object_key=object_key, url=self._object_url(object_key))
 
     async def aclose(self) -> None:
-        """Release the underlying async client's aiohttp session.
+        """Release the botocore client's connection pool.
 
-        ``IngestionService.aclose`` discovers this by name; without it the
-        session leaked on every request (ISSUES.md E58).
+        ``IngestionService.aclose`` discovers this by name. The async Azure
+        client leaked an aiohttp session on every request without it
+        (ISSUES.md E58); botocore's pool is smaller but the seam still has to
+        exist, or ``_close_resource`` silently skips this dependency again.
         """
-        client = getattr(self, "_blob_service_client", None)
-        if client is None:
+        client = getattr(self, "_client", None)
+        close = getattr(client, "close", None)
+        if close is None:
             return
-        await client.close()
+        await asyncio.to_thread(close)
 
     async def delete_audio(self, stored_audio: StoredAudio) -> None:
-        blob_client = self._blob_service_client.get_blob_client(
-            container=self._container_name,
-            blob=stored_audio.blob_name,
+        await asyncio.to_thread(
+            self._client.delete_object,
+            Bucket=self._bucket,
+            Key=stored_audio.object_key,
         )
-        await blob_client.delete_blob(delete_snapshots="include")
 
-    async def _ensure_container(self) -> None:
-        if self._container_ready:
-            return
+    def _object_url(self, object_key: str) -> str:
+        """The canonical **unsigned** URL for an object.
 
-        container_client = self._blob_service_client.get_container_client(self._container_name)
-        try:
-            # Deliberately private. Blob names derive from a client-supplied
-            # input_id, so a public container would expose guessable URLs to
-            # private voice recordings. Readers get a read-time SAS instead.
-            await container_client.create_container()
-        except self._resource_exists_error:
-            pass
-
-        self._container_ready = True
+        The bucket is private, so this is not fetchable on its own --
+        data-provision-api mints a presigned token at read time. Persisting the
+        unsigned form is what stops stored records rotting into expired links
+        (ISSUES.md E52), so this must stay unsigned.
+        """
+        return f"https://{self._bucket}.s3.{self._region}.amazonaws.com/{quote(object_key)}"
 
 
-def _build_blob_name(*, input_id: str, filename: str | None, content_type: str | None) -> str:
+# `mimetypes` answers from the host MIME database (/etc/mime.types), so the same
+# upload yields `audio/wav` on one machine and `audio/x-wav` on another -- proven
+# live against S3. The value is persisted on the object and served to browsers,
+# and the suffix becomes part of the object key, so neither may depend on which
+# base image the service happens to be running. Pin the formats this service
+# accepts and fall back to `mimetypes` only for anything outside the list.
+_AUDIO_CONTENT_TYPE_BY_SUFFIX: dict[str, str] = {
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".mp4": "audio/mp4",
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/opus",
+    ".wav": "audio/wav",
+    ".webm": "audio/webm",
+}
+_SUFFIX_BY_AUDIO_CONTENT_TYPE: dict[str, str] = {
+    "audio/aac": ".aac",
+    "audio/flac": ".flac",
+    "audio/mp4": ".m4a",
+    "audio/mpeg": ".mp3",
+    "audio/ogg": ".ogg",
+    "audio/opus": ".opus",
+    "audio/wav": ".wav",
+    "audio/webm": ".webm",
+    "audio/x-m4a": ".m4a",
+    "audio/x-wav": ".wav",
+}
+
+
+def _build_object_key(*, input_id: str, filename: str | None, content_type: str | None) -> str:
     return f"audio/{_sanitize_path_segment(input_id)}/source{_resolve_suffix(filename, content_type)}"
 
 
@@ -147,18 +190,28 @@ def _resolve_suffix(filename: str | None, content_type: str | None) -> str:
             return suffix.lower()
 
     if content_type:
-        guessed_extension = mimetypes.guess_extension(content_type.strip(), strict=False)
+        normalized = content_type.strip().split(";")[0].strip().lower()
+        pinned = _SUFFIX_BY_AUDIO_CONTENT_TYPE.get(normalized)
+        if pinned:
+            return pinned
+
+        guessed_extension = mimetypes.guess_extension(normalized, strict=False)
         if guessed_extension:
             return guessed_extension.lower()
 
     return ".bin"
 
 
-def _resolve_content_type(content_type: str | None, blob_name: str) -> str:
+def _resolve_content_type(content_type: str | None, object_key: str) -> str:
     if content_type and content_type.strip():
         return content_type.strip()
 
-    guessed_content_type, _ = mimetypes.guess_type(blob_name)
+    suffix = Path(object_key).suffix.lower()
+    pinned = _AUDIO_CONTENT_TYPE_BY_SUFFIX.get(suffix)
+    if pinned:
+        return pinned
+
+    guessed_content_type, _ = mimetypes.guess_type(object_key)
     if guessed_content_type:
         return guessed_content_type
 

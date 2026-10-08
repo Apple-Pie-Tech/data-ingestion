@@ -39,12 +39,9 @@ class FakeEmbeddings(BaseEmbeddings):
 
 def make_settings() -> Settings:
     return Settings(
-        azure_openai_endpoint="https://example.openai.azure.com",
-        azure_openai_api_key="secret-key",
-        azure_openai_api_version="2024-10-21",
-        azure_openai_embeddings_deployment="embeddings-deployment",
-        embedding_model="text-embedding-3-large",
-        embedding_dim=3072,
+        bedrock_embeddings_model="cohere.embed-v4:0",
+        embedding_model="cohere.embed-v4:0",
+        embedding_dim=1536,
     )
 
 
@@ -93,12 +90,9 @@ def test_chunk_metadata_includes_chunk_indices_and_chunking_configuration() -> N
 
 def test_chunk_metadata_uses_settings_values_for_chunking_tunables() -> None:
     settings = Settings(
-        azure_openai_endpoint="https://example.openai.azure.com",
-        azure_openai_api_key="secret-key",
-        azure_openai_api_version="2024-10-21",
-        azure_openai_embeddings_deployment="embeddings-deployment",
-        embedding_model="text-embedding-3-large",
-        embedding_dim=3072,
+        bedrock_embeddings_model="cohere.embed-v4:0",
+        embedding_model="cohere.embed-v4:0",
+        embedding_dim=1536,
         semantic_similarity_threshold=0.66,
         min_chunk_chars=123,
         max_chunk_chars=456,

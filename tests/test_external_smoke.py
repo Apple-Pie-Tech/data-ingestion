@@ -28,13 +28,17 @@ SAMPLE_TEXT = (
     "She found a tiny golden key on a glass table."
 )
 SAMPLE_WAV_PATH = Path(__file__).parent / "fixtures" / "sample.wav"
+# AWS credentials are deliberately absent from this list. boto3 resolves them
+# through its own chain -- an SSO profile, the ambient role, or the environment --
+# so requiring AWS_ACCESS_KEY_ID here would skip the smoke for exactly the setups
+# that are configured correctly. AWS_REGION is the one value that has no sane
+# default for this stack (Bedrock entitlement is per region).
 TEXT_SMOKE_ENV_VARS = (
     "QDRANT_URL",
-    "AZURE_OPENAI_ENDPOINT",
-    "AZURE_OPENAI_API_KEY",
-    "AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT",
+    "AWS_REGION",
 )
 AUDIO_SMOKE_ENV_VARS = TEXT_SMOKE_ENV_VARS + (
+    "S3_AUDIO_BUCKET",
     "GRADIUM_API_BASE_URL",
     "GRADIUM_API_KEY",
     "GRADIUM_TRANSCRIPTION_MODEL",

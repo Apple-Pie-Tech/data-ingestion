@@ -413,9 +413,9 @@ def test_audio_ingest_returns_audio_url_when_storage_is_enabled() -> None:
                 content_type: str | None = None,
         ) -> object:
             return _audio_storage.StoredAudio(
-                blob_name="audio/sample-input-001/source.wav",
+                object_key="audio/sample-input-001/source.wav",
                 url=(
-                    "https://example.blob.core.windows.net/ingest-audio/"
+                    "https://applepie-audio.s3.us-east-1.amazonaws.com/"
                     "audio/sample-input-001/source.wav"
                 )
             )
@@ -454,7 +454,7 @@ def test_audio_ingest_returns_audio_url_when_storage_is_enabled() -> None:
         "status": "indexed",
         "chunks": 1,
         "audio_url": (
-            "https://example.blob.core.windows.net/ingest-audio/"
+            "https://applepie-audio.s3.us-east-1.amazonaws.com/"
             "audio/sample-input-001/source.wav"
         ),
     }

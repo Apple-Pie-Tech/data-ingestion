@@ -158,7 +158,7 @@ class FakeAudioStorage:
             }
         )
         return _ingestion.StoredAudio(
-            blob_name="audio/sample-input-001/source.wav",
+            object_key="audio/sample-input-001/source.wav",
             url=self.url,
         )
 
@@ -273,7 +273,7 @@ async def test_audio_only_uploads_once_and_reuses_same_audio_url() -> None:
     )
     vector_store = FakeVectorStore()
     audio_storage = FakeAudioStorage(
-        "https://example.blob.core.windows.net/ingest-audio/audio/sample-input-001/source.wav"
+        "https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav"
     )
     service = IngestionService(
         Settings(audio_storage_enabled=True),
@@ -333,7 +333,7 @@ async def test_audio_storage_failure_is_raised() -> None:
 @pytest.mark.asyncio
 async def test_failed_audio_ingest_deletes_uploaded_blob() -> None:
     audio_storage = FakeAudioStorage(
-        "https://example.blob.core.windows.net/ingest-audio/audio/sample-input-001/source.wav"
+        "https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav"
     )
     service = IngestionService(
         Settings(audio_storage_enabled=True),
@@ -357,8 +357,8 @@ async def test_failed_audio_ingest_deletes_uploaded_blob() -> None:
 
     assert len(audio_storage.deleted) == 1
     assert audio_storage.deleted[0] == _ingestion.StoredAudio(
-        blob_name="audio/sample-input-001/source.wav",
-        url="https://example.blob.core.windows.net/ingest-audio/audio/sample-input-001/source.wav",
+        object_key="audio/sample-input-001/source.wav",
+        url="https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav",
     )
 
 
@@ -390,7 +390,7 @@ async def test_aclose_closes_all_lazily_created_dependencies() -> None:
     chunker = FakeChunker(make_chunks())
     embeddings = FakeEmbeddingsClient(embeddings=[[0.1, 0.2, 0.3, 0.4]])
     vector_store = FakeVectorStore()
-    audio_storage = FakeAudioStorage("https://example.blob.core.windows.net/ingest-audio/audio/sample-input-001/source.wav")
+    audio_storage = FakeAudioStorage("https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav")
     service = IngestionService(
         Settings(),
         audio_storage=audio_storage,

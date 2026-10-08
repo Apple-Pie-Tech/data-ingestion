@@ -18,8 +18,10 @@ class Settings(BaseSettings):
     max_audio_bytes: int = 25_000_000
     request_timeout_seconds: int = 60
     audio_storage_enabled: bool = False
-    azure_storage_connection_string: str | None = None
-    azure_storage_container: str = "ingest-audio"
+    # Bucket created by Terraform; the service only ever writes into it. Audio
+    # objects are private, so the URL recorded in the vector payload is the
+    # canonical unsigned one and data-provision-api presigns it at read time.
+    s3_audio_bucket: str | None = None
 
     qdrant_url: str = "http://localhost:6333"
     qdrant_api_key: str | None = None

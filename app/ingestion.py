@@ -16,7 +16,7 @@ _vector_store = import_module("app.vector_store")
 Settings = _config.Settings
 AudioStorageClient = _audio_storage.AudioStorageClient
 AudioStorageError = _audio_storage.AudioStorageError
-AzureBlobAudioStorage = _audio_storage.AzureBlobAudioStorage
+S3AudioStorage = _audio_storage.S3AudioStorage
 StoredAudio = _audio_storage.StoredAudio
 EmbeddingClient = _embeddings.EmbeddingClient
 EmbeddingError = _embeddings.EmbeddingError
@@ -228,7 +228,7 @@ class IngestionService:
 
     def _get_audio_storage(self) -> AudioStorageClient:
         if self._audio_storage is None:
-            self._audio_storage = AzureBlobAudioStorage(self._settings)
+            self._audio_storage = S3AudioStorage(self._settings)
         return self._audio_storage
 
     def _get_chunker(self) -> Chunker:

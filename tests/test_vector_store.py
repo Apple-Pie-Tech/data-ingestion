@@ -238,10 +238,10 @@ async def test_audio_payload_includes_shared_audio_url() -> None:
         embeddings=[[0.1, 0.2, 0.3, 0.4]],
         source="audio",
         embedding_model="text-embedding-3-large",
-        audio_url="https://example.blob.core.windows.net/ingest-audio/audio/sample-input-001/source.wav",
+        audio_url="https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav",
     )
 
     first_payload = fake_client.upserted_points[0].payload
     assert first_payload["audio_url"] == (
-        "https://example.blob.core.windows.net/ingest-audio/audio/sample-input-001/source.wav"
+        "https://applepie-audio.s3.us-east-1.amazonaws.com/audio/sample-input-001/source.wav"
     )
