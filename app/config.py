@@ -26,6 +26,21 @@ class Settings(BaseSettings):
     # Resolved once by get_settings(); the plain field still works for local
     # development, and wins when both are absent from Secrets Manager.
     ingest_api_key_secret_arn: str | None = None
+
+    # Verifying the Supabase access token the UI already holds is what makes
+    # the write endpoint authenticated rather than merely deterred. Unset means
+    # the check is SKIPPED, matching INGEST_API_KEY above and for the same reason:
+    # a fresh clone with no .env has to keep working. Terraform always sets it,
+    # and create_app warns when it is missing so an open deployment is not
+    # silent.
+    supabase_url: str | None = None
+    supabase_jwt_audience: str = "authenticated"
+    # Only for a project still signing with the legacy HS256 shared secret. In
+    # the asymmetric regime (ES256/RS256) the keys are published at the
+    # project's JWKS endpoint and there is no secret to hold at all.
+    supabase_jwt_secret: str | None = None
+    supabase_jwt_secret_arn: str | None = None
+    supabase_jwks_cache_seconds: int = 600
     max_audio_bytes: int = 25_000_000
     request_timeout_seconds: int = 60
     audio_storage_enabled: bool = False
@@ -75,6 +90,7 @@ class Settings(BaseSettings):
 SECRET_FIELD_ARNS = {
     "gradium_api_key": "gradium_api_key_secret_arn",
     "ingest_api_key": "ingest_api_key_secret_arn",
+    "supabase_jwt_secret": "supabase_jwt_secret_arn",
 }
 
 

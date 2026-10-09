@@ -9,6 +9,11 @@ description = "Minimal Dockerized ingestion service for Apple Pie"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  # Verifying the Supabase access token. The [crypto] extra pulls in
+  # cryptography, which is what implements ES256/RS256 -- the stdlib has no
+  # ECDSA. Imported lazily in app/supabase_jwt.py to keep it off the Lambda
+  # init path; see that module\'s docstring.
+  "pyjwt[crypto]>=2.9",
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
   "python-multipart>=0.0.9",
