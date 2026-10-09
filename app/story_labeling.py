@@ -7,6 +7,8 @@ from typing import Protocol
 
 import httpx
 
+from app.request_signing import SigV4Auth
+
 _config = import_module("app.config")
 _schemas = import_module("app.schemas")
 
@@ -63,9 +65,18 @@ class StoryLabelingTriggerClient:
 
         self._base_url = settings.story_labeling_api_base_url.rstrip("/")
         if self._client is None:
+            # SigV4 when the target is an IAM-authorized Lambda function URL,
+            # which is how it is deployed; unsigned locally, where the target is
+            # a plain uvicorn with no authorizer in front of it.
+            auth = (
+                SigV4Auth(region=settings.aws_region)
+                if settings.story_labeling_sign_requests
+                else None
+            )
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 timeout=httpx.Timeout(float(settings.story_labeling_timeout_seconds)),
+                auth=auth,
             )
 
     async def trigger_cluster_labels(

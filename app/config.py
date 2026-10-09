@@ -1,5 +1,7 @@
 from functools import lru_cache
 
+from app.secrets import resolve_secret_fields
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,8 +15,17 @@ class Settings(BaseSettings):
     story_labeling_enabled: bool = False
     story_labeling_api_base_url: str | None = None
     story_labeling_timeout_seconds: int = 60
+    # The labelling function URL is IAM-authorized in deployment, so the trigger
+    # has to sign its request with SigV4. Off by default so a local run against
+    # a plain uvicorn still works.
+    story_labeling_sign_requests: bool = False
 
     ingest_api_key: str | None = None
+    # Set by Terraform instead of the value above: a secret value in a Lambda
+    # environment variable would be recorded in Terraform state in plaintext.
+    # Resolved once by get_settings(); the plain field still works for local
+    # development, and wins when both are absent from Secrets Manager.
+    ingest_api_key_secret_arn: str | None = None
     max_audio_bytes: int = 25_000_000
     request_timeout_seconds: int = 60
     audio_storage_enabled: bool = False
@@ -52,6 +63,7 @@ class Settings(BaseSettings):
 
     gradium_api_base_url: str | None = None
     gradium_api_key: str | None = None
+    gradium_api_key_secret_arn: str | None = None
     gradium_transcription_model: str | None = None
     gradium_transcription_transport: str = "rest"
     gradium_transcription_path: str = "/post/speech/asr"
@@ -59,6 +71,26 @@ class Settings(BaseSettings):
     gradium_timeout_seconds: int = 60
 
 
+# Target field -> the setting holding the ARN to resolve it from.
+SECRET_FIELD_ARNS = {
+    "gradium_api_key": "gradium_api_key_secret_arn",
+    "ingest_api_key": "ingest_api_key_secret_arn",
+}
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    """Build Settings, resolving any Secrets Manager ARNs it was given.
+
+    Cached, so the Secrets Manager calls happen once per execution environment
+    rather than once per request.
+    """
+    settings = Settings()
+    resolved = resolve_secret_fields(
+        settings,
+        SECRET_FIELD_ARNS,
+        region=settings.aws_region,
+    )
+    if not resolved:
+        return settings
+    return settings.model_copy(update=resolved)
